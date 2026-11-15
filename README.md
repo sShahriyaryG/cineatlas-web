@@ -1,8 +1,9 @@
 # CineAtlas · Full-stack movie discovery (v0.2)
 
-A modern web redevelopment of the uploaded IMDb-style Python university assignment.
+A modern web redevelopment of the IMDb-style Python; my university assignment.
 
 ## Stack
+
 - React 19 + TypeScript + Vite (responsive dark-themed frontend)
 - Python FastAPI, SQLAlchemy 2, Argon2id password hashing
 - PostgreSQL 17 + Alembic migrations (SQLite available for no-Docker development)
@@ -25,7 +26,7 @@ docker compose cp /path/to/40131849.zip api:/app/legacy.zip
 docker compose exec api python import_legacy.py /app/legacy.zip
 ```
 
-Refresh the web page. The importer is idempotent by legacy UUID, but *imported user-authored movie content is not verified*; review it before sharing a public deployment.
+Refresh the web page. The importer is idempotent by legacy UUID, but _imported user-authored movie content is not verified_; review it before sharing a public deployment.
 
 ### Local development without Docker
 
@@ -82,7 +83,7 @@ pytest -q
 
 ## Release limitations / next steps
 
-This is a functional **development MVP**, *not* the full specification and *not* production-ready.
+This is a functional **development MVP**, _not_ the full specification and _not_ production-ready.
 
 - The frontend still needs dedicated admin/editor dashboards and multi-list management.
 - Full movie/person/cast and crew relationships, follows, activity feeds, notifications, review voting, and advanced Boolean search are not yet implemented.
@@ -107,4 +108,5 @@ compose.yaml
 ```
 
 ### API
+
 All endpoints have an interactive schema at `http://localhost:8000/docs`.
