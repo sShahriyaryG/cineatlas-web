@@ -19,10 +19,10 @@ docker compose up --build
 
 Visit **http://localhost:5173**. API docs: **http://localhost:8000/docs**.
 
-To import movie metadata from the original uploaded ZIP without copying accounts or insecure password hashes:
+To import movie metadata from an original ZIP without copying accounts or insecure password hashes:
 
 ```bash
-docker compose cp /path/to/40131849.zip api:/app/legacy.zip
+docker compose cp /path/to/[YOUR_LEGACY_DATA].zip api:/app/legacy.zip
 docker compose exec api python import_legacy.py /app/legacy.zip
 ```
 
