@@ -1,0 +1,199 @@
+from contextlib import asynccontextmanager
+from collections import Counter
+from datetime import datetime
+from typing import Annotated
+from fastapi import FastAPI, Depends, HTTPException, Query, Response
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field, EmailStr, ConfigDict
+from sqlalchemy.orm import Session
+from sqlalchemy import select, func, or_
+from sqlalchemy.exc import IntegrityError
+from .db import Base,engine,get_db
+from .models import User,Movie,Rating,Review,Watchlist,EditSuggestion,Report
+from .security import hash_password,verify_password,create_token,revoke_token,current_user,require_role
+from fastapi.security import HTTPBearer,HTTPAuthorizationCredentials
+
+@asynccontextmanager
+async def lifespan(app):
+    Base.metadata.create_all(bind=engine) # development convenience; deploy with migrations
+    yield
+app=FastAPI(title='CineAtlas API',version='0.2.0',lifespan=lifespan)
+app.add_middleware(CORSMiddleware,allow_origins=['http://localhost:5173','http://127.0.0.1:5173'],allow_credentials=False,allow_methods=['GET','POST','PUT','DELETE','PATCH'],allow_headers=['Authorization','Content-Type'])
+
+class SignUp(BaseModel):
+    username: str=Field(min_length=3,max_length=40,pattern=r'^[A-Za-z0-9_]+$')
+    email: EmailStr
+    password: str=Field(min_length=10,max_length=128)
+class Login(BaseModel):
+    identifier: str
+    password: str
+class MovieInput(BaseModel):
+    title: str=Field(min_length=1,max_length=240)
+    year: int=Field(ge=1888,le=2200)
+    genres: str=Field(max_length=255)
+    synopsis: str=Field(default='',max_length=10000)
+    poster_url: str=Field(default='',max_length=600)
+    runtime: int | None=Field(default=None,ge=1,le=10000)
+    language: str=Field(default='',max_length=100)
+    country: str=Field(default='',max_length=100)
+class ScoreInput(BaseModel): score:int=Field(ge=1,le=10)
+class ReviewInput(BaseModel):
+    title:str=Field(min_length=1,max_length=140)
+    body:str=Field(min_length=5,max_length=5000)
+    spoiler:bool=False
+class SuggestionInput(BaseModel):
+    synopsis:str=Field(min_length=5,max_length=10000)
+    reason:str=Field(min_length=5,max_length=1000)
+class ReportInput(BaseModel): reason:str=Field(min_length=5,max_length=1000)
+class ProfileInput(BaseModel): bio:str=Field(max_length=1000)
+
+def safe_user(u): return {'id':u.id,'username':u.username,'role':u.role,'bio':u.bio}
+def movie_out(db,m):
+    avg,count=db.execute(select(func.avg(Rating.score),func.count(Rating.id)).where(Rating.movie_id==m.id)).one()
+    return {'id':m.id,'title':m.title,'year':m.year,'genres':m.genres.split(',') if m.genres else [],'synopsis':m.synopsis,'poster_url':m.poster_url,'runtime':m.runtime,'language':m.language,'country':m.country,'average_rating':round(float(avg),1) if avg is not None else None,'rating_count':count}
+def must_movie(db,id):
+    m=db.get(Movie,id)
+    if not m:raise HTTPException(404,'Movie not found')
+    return m
+
+@app.get('/api/health')
+def health():return {'status':'ok'}
+@app.post('/api/auth/register',status_code=201)
+def register(payload:SignUp,db:Session=Depends(get_db)):
+    u=User(username=payload.username,email=str(payload.email).lower(),password_hash=hash_password(payload.password))
+    db.add(u)
+    try:db.commit()
+    except IntegrityError:
+        db.rollback();raise HTTPException(409,'Username or email already exists')
+    return {'token':create_token(u.id),'user':safe_user(u)}
+@app.post('/api/auth/login')
+def login(payload:Login,db:Session=Depends(get_db)):
+    u=db.scalar(select(User).where(or_(User.email==payload.identifier.lower(),User.username==payload.identifier)))
+    if not u or not u.is_active or not verify_password(payload.password,u.password_hash):raise HTTPException(401,'Invalid credentials')
+    return {'token':create_token(u.id),'user':safe_user(u)}
+@app.get('/api/auth/me')
+def me(user:User=Depends(current_user)):return safe_user(user)
+@app.post('/api/auth/logout',status_code=204)
+def logout(creds:HTTPAuthorizationCredentials=Depends(HTTPBearer()),user:User=Depends(current_user)):
+    revoke_token(creds.credentials)
+    return Response(status_code=204)
+@app.patch('/api/auth/me')
+def update_profile(payload:ProfileInput,user:User=Depends(current_user),db:Session=Depends(get_db)):
+    user.bio=payload.bio;db.commit();return safe_user(user)
+
+@app.get('/api/movies')
+def movies(q:str='',genre:str='',year:int|None=None,sort:str='title',page:int=Query(1,ge=1),size:int=Query(12,ge=1,le=50),db:Session=Depends(get_db)):
+    stmt=select(Movie)
+    if q:stmt=stmt.where(or_(Movie.title.ilike(f'%{q.replace("%", "\\%")}%'),Movie.synopsis.ilike(f'%{q.replace("%", "\\%")}%')))
+    if genre:stmt=stmt.where(Movie.genres.ilike(f'%{genre}%'))
+    if year:stmt=stmt.where(Movie.year==year)
+    total=db.scalar(select(func.count()).select_from(stmt.subquery()))
+    if sort=='newest':stmt=stmt.order_by(Movie.year.desc(),Movie.title)
+    elif sort=='oldest':stmt=stmt.order_by(Movie.year,Movie.title)
+    else:stmt=stmt.order_by(Movie.title)
+    items=db.scalars(stmt.offset((page-1)*size).limit(size)).all()
+    return {'items':[movie_out(db,m) for m in items],'total':total,'page':page,'size':size}
+@app.get('/api/genres')
+def genres(db:Session=Depends(get_db)):
+    return sorted({g.strip() for m in db.scalars(select(Movie.genres)) for g in m.split(',') if g.strip()})
+@app.get('/api/movies/{movie_id}')
+def movie_detail(movie_id:int,db:Session=Depends(get_db)):
+    return movie_out(db,must_movie(db,movie_id))
+@app.post('/api/movies',status_code=201)
+def create_movie(payload:MovieInput,db:Session=Depends(get_db),user:User=Depends(require_role('admin'))):
+    m=Movie(**payload.model_dump());db.add(m);db.commit();db.refresh(m);return movie_out(db,m)
+@app.put('/api/movies/{movie_id}')
+def update_movie(movie_id:int,payload:MovieInput,db:Session=Depends(get_db),user:User=Depends(require_role('admin'))):
+    m=must_movie(db,movie_id)
+    for k,v in payload.model_dump().items():setattr(m,k,v)
+    db.commit();return movie_out(db,m)
+@app.delete('/api/movies/{movie_id}',status_code=204)
+def delete_movie(movie_id:int,db:Session=Depends(get_db),user:User=Depends(require_role('admin'))):
+    m=must_movie(db,movie_id)
+    review_ids=select(Review.id).where(Review.movie_id==movie_id)
+    db.query(Report).filter(Report.review_id.in_(review_ids)).delete(synchronize_session=False)
+    for model in [Rating,Review,Watchlist,EditSuggestion]:db.query(model).filter(model.movie_id==movie_id).delete(synchronize_session=False)
+    db.delete(m);db.commit();return Response(status_code=204)
+
+@app.put('/api/movies/{movie_id}/rating')
+def rate(movie_id:int,payload:ScoreInput,user:User=Depends(current_user),db:Session=Depends(get_db)):
+    must_movie(db,movie_id)
+    r=db.scalar(select(Rating).where(Rating.user_id==user.id,Rating.movie_id==movie_id))
+    if r:r.score=payload.score
+    else:db.add(Rating(user_id=user.id,movie_id=movie_id,score=payload.score))
+    db.commit();return movie_out(db,must_movie(db,movie_id))
+@app.get('/api/movies/{movie_id}/reviews')
+def reviews(movie_id:int,db:Session=Depends(get_db)):
+    must_movie(db,movie_id)
+    items=db.scalars(select(Review).where(Review.movie_id==movie_id,Review.hidden==False).order_by(Review.created_at.desc())).all()
+    return [{'id':r.id,'username':r.user.username,'title':r.title,'body':r.body,'spoiler':r.spoiler,'created_at':r.created_at.isoformat()} for r in items]
+@app.post('/api/movies/{movie_id}/reviews',status_code=201)
+def write_review(movie_id:int,payload:ReviewInput,user:User=Depends(current_user),db:Session=Depends(get_db)):
+    must_movie(db,movie_id);r=Review(movie_id=movie_id,user_id=user.id,**payload.model_dump());db.add(r);db.commit();return {'id':r.id}
+@app.delete('/api/reviews/{review_id}',status_code=204)
+def remove_review(review_id:int,user:User=Depends(current_user),db:Session=Depends(get_db)):
+    r=db.get(Review,review_id)
+    if not r:raise HTTPException(404,'Review not found')
+    if user.id!=r.user_id and user.role!='admin':raise HTTPException(403,'Not authorized')
+    db.delete(r);db.commit();return Response(status_code=204)
+@app.post('/api/reviews/{review_id}/reports',status_code=201)
+def report_review(review_id:int,payload:ReportInput,user:User=Depends(current_user),db:Session=Depends(get_db)):
+    if not db.get(Review,review_id):raise HTTPException(404,'Review not found')
+    r=Report(review_id=review_id,user_id=user.id,reason=payload.reason);db.add(r);db.commit();return {'id':r.id}
+
+@app.get('/api/me/watchlist')
+def get_watchlist(user:User=Depends(current_user),db:Session=Depends(get_db)):
+    ids=db.scalars(select(Watchlist.movie_id).where(Watchlist.user_id==user.id)).all()
+    return [movie_out(db,m) for m in db.scalars(select(Movie).where(Movie.id.in_(ids))).all()]
+@app.put('/api/me/watchlist/{movie_id}')
+def add_watchlist(movie_id:int,user:User=Depends(current_user),db:Session=Depends(get_db)):
+    must_movie(db,movie_id)
+    if not db.scalar(select(Watchlist).where(Watchlist.user_id==user.id,Watchlist.movie_id==movie_id)):
+        db.add(Watchlist(user_id=user.id,movie_id=movie_id));db.commit()
+    return {'saved':True}
+@app.delete('/api/me/watchlist/{movie_id}')
+def del_watchlist(movie_id:int,user:User=Depends(current_user),db:Session=Depends(get_db)):
+    w=db.scalar(select(Watchlist).where(Watchlist.user_id==user.id,Watchlist.movie_id==movie_id))
+    if w:db.delete(w);db.commit()
+    return {'saved':False}
+@app.get('/api/me/recommendations')
+def recommendations(user:User=Depends(current_user),db:Session=Depends(get_db)):
+    ratings=db.execute(select(Rating,Movie).join(Movie,Movie.id==Rating.movie_id).where(Rating.user_id==user.id)).all()
+    weights=Counter()
+    for r,m in ratings:
+        if r.score>=7:
+            for g in m.genres.split(','):weights[g.strip()]+=r.score-5
+    seen={r.movie_id for r,m in ratings}
+    movies=db.scalars(select(Movie)).all()
+    ranked=sorted((m for m in movies if m.id not in seen),key=lambda m:sum(weights[g.strip()] for g in m.genres.split(',')),reverse=True)
+    return [movie_out(db,m) for m in ranked[:8]]
+
+@app.post('/api/movies/{movie_id}/suggestions',status_code=201)
+def suggest(movie_id:int,payload:SuggestionInput,user:User=Depends(require_role('editor','admin')),db:Session=Depends(get_db)):
+    must_movie(db,movie_id)
+    s=EditSuggestion(movie_id=movie_id,user_id=user.id,**payload.model_dump());db.add(s);db.commit();return {'id':s.id,'status':s.status}
+@app.get('/api/admin/suggestions')
+def suggestions(user:User=Depends(require_role('admin')),db:Session=Depends(get_db)):
+    return [{'id':s.id,'movie_id':s.movie_id,'synopsis':s.synopsis,'reason':s.reason,'status':s.status} for s in db.scalars(select(EditSuggestion).order_by(EditSuggestion.id.desc()))]
+@app.post('/api/admin/suggestions/{id}/{decision}')
+def decide(id:int,decision:str,user:User=Depends(require_role('admin')),db:Session=Depends(get_db)):
+    if decision not in ('approved','rejected'):raise HTTPException(422,'Invalid decision')
+    s=db.get(EditSuggestion,id)
+    if not s:raise HTTPException(404,'Suggestion not found')
+    if s.status!='pending':raise HTTPException(409,'Already reviewed')
+    if decision=='approved':must_movie(db,s.movie_id).synopsis=s.synopsis
+    s.status=decision;db.commit();return {'status':s.status}
+@app.get('/api/admin/reports')
+def reports(user:User=Depends(require_role('admin')),db:Session=Depends(get_db)):
+    return [{'id':r.id,'review_id':r.review_id,'reason':r.reason,'status':r.status} for r in db.scalars(select(Report).order_by(Report.id.desc()))]
+@app.post('/api/admin/reports/{id}/{decision}')
+def decide_report(id:int,decision:str,user:User=Depends(require_role('admin')),db:Session=Depends(get_db)):
+    if decision not in ('dismissed','hidden'):raise HTTPException(422,'Invalid decision')
+    r=db.get(Report,id)
+    if not r:raise HTTPException(404,'Report not found')
+    if r.status!='pending':raise HTTPException(409,'Already reviewed')
+    if decision=='hidden':db.get(Review,r.review_id).hidden=True
+    r.status=decision;db.commit();return {'status':r.status}
+@app.get('/api/admin/stats')
+def stats(user:User=Depends(require_role('admin')),db:Session=Depends(get_db)):
+    return {'users':db.scalar(select(func.count(User.id))),'movies':db.scalar(select(func.count(Movie.id))),'reviews':db.scalar(select(func.count(Review.id))),'ratings':db.scalar(select(func.count(Rating.id)))}
