@@ -19,3 +19,5 @@ legacy/
 
 .vscode/
 .DS_Store
+
+frontend/public/tmdb-logo.svg

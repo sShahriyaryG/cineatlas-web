@@ -119,3 +119,22 @@ class MovieCredit(Base):
         CheckConstraint("role IN ('actor','director','writer','producer')", name='valid_credit_role'),
         CheckConstraint("role = 'actor' OR character = ''", name='valid_credit_character'),
     )
+
+
+class PersonSource(Base):
+    """An external identity; names alone are not identity keys."""
+    __tablename__ = 'person_sources'
+    source: Mapped[str] = mapped_column(String(32), primary_key=True)
+    external_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    person_id: Mapped[int] = mapped_column(ForeignKey('persons.id', ondelete='CASCADE'), index=True)
+    __table_args__ = (UniqueConstraint('source', 'person_id', name='uq_person_sources_source_person'),)
+
+
+class MovieEnrichmentField(Base):
+    """Import history, not a claim about the current value after manual edits."""
+    __tablename__ = 'movie_enrichment_fields'
+    movie_id: Mapped[int] = mapped_column(ForeignKey('movies.id', ondelete='CASCADE'), primary_key=True)
+    field: Mapped[str] = mapped_column(String(32), primary_key=True)
+    source: Mapped[str] = mapped_column(String(32), primary_key=True)
+    external_id: Mapped[str] = mapped_column(String(64))
+    imported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

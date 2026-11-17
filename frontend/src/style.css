@@ -67,3 +67,15 @@
 .report-actions{display:flex;justify-content:flex-end;align-items:center;gap:8px;flex-wrap:wrap}
 .report-form button:disabled,.report-trigger:disabled{opacity:.55;cursor:not-allowed}
 .report-success{display:flex;align-items:center;gap:7px;margin-top:12px;color:#a4e6cd;font-size:12px}
+
+/* Metadata enrichment: compact credits and source attribution. */
+.film-credits{margin:22px 0;padding-top:16px;border-top:1px solid #303846}
+.film-credits h3{margin:0 0 12px;font-size:17px}
+.credit-group{margin:12px 0}
+.credit-group h4{font-size:12px;color:#a7b4c4;margin:0 0 7px}
+.credit-group ul{display:flex;flex-wrap:wrap;gap:7px;list-style:none;margin:0;padding:0}
+.credit-group li{display:flex;flex-direction:column;gap:3px;padding:7px 10px;border:1px solid #303846;background:#1a222d;border-radius:7px;font-size:12px;max-width:100%;overflow-wrap:anywhere}
+.credit-group li span{color:#a7b4c4;font-size:11px}
+.data-credits{display:flex;flex-direction:column;gap:7px;max-width:350px;line-height:1.5}
+.data-credits img{display:block;max-width:85px;max-height:22px;object-fit:contain}
+.data-credits a{color:#c5d1e0}
