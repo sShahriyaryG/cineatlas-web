@@ -19,7 +19,7 @@ from fastapi.security import HTTPBearer,HTTPAuthorizationCredentials
 async def lifespan(app):
     Base.metadata.create_all(bind=engine) # development convenience; deploy with migrations
     yield
-app=FastAPI(title='CineAtlas API',version='0.3.0',lifespan=lifespan)
+app=FastAPI(title='CineAtlas API',version='0.4.0',lifespan=lifespan)
 app.add_middleware(CORSMiddleware,allow_origins=['http://localhost:5173','http://127.0.0.1:5173'],allow_credentials=False,allow_methods=['GET','POST','PUT','DELETE','PATCH'],allow_headers=['Authorization','Content-Type'])
 
 class SignUp(BaseModel):
