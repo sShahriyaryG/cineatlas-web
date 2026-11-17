@@ -1,29 +1,33 @@
+import {NavigationLink,type Navigate} from './NavigationLink';
+import {personPath} from './navigation';
 import {useEffect, useState} from 'react';
 
 type Credit = { id:number; person_id:number; name:string; role:string; character:string };
 type Request = (path:string, options?:RequestInit)=>Promise<unknown>;
 const groups = [{key:'director',label:'Directed by'},{key:'writer',label:'Written by'}, {key:'actor',label:'Cast'}, {key:'producer',label:'Produced by'}];
 
-export function MovieCredits({movieId,request}:{movieId:number;request:Request}) {
+export function MovieCredits({movieId,request,navigate}:{movieId:number;request:Request;navigate:Navigate}) {
+  const [retry,setRetry]=useState(0);
   const [credits,setCredits]=useState<Credit[]>([]);
   const [status,setStatus]=useState<'loading'|'ready'|'error'>('loading');
   useEffect(()=>{
     let active=true;
     setStatus('loading'); setCredits([]);
-    request(`/movies/${movieId}/credits`).then(data=>{
+    const controller=new AbortController();
+    request(`/movies/${movieId}/credits`,{signal:controller.signal}).then(data=>{
       if (!Array.isArray(data)) throw new Error('Invalid credits');
       if(active){setCredits(data as Credit[]);setStatus('ready')}
     }).catch(()=>{if(active)setStatus('error')});
-    return ()=>{active=false};
-  },[movieId,request]);
+    return ()=>{active=false;controller.abort()};
+  },[movieId,request,retry]);
   return <section className="film-credits" aria-label="Cast and crew">
     <h3>Cast &amp; crew</h3>
     {status==='loading'&&<p className="muted" role="status">Loading credits…</p>}
-    {status==='error'&&<p className="muted">Credits could not be loaded.</p>}
+    {status==='error'&&<div role="alert" className="muted">Credits could not be loaded. <button className="text-link" onClick={()=>setRetry(v=>v+1)}>Try again</button></div>}
     {status==='ready'&&!credits.length&&<p className="muted">No credits have been added yet.</p>}
     {status==='ready'&&groups.map(group=>{
       const items=credits.filter(c=>c.role===group.key);
-      return items.length>0&&<div key={group.key} className="credit-group"><h4>{group.label}</h4><ul>{items.map(c=><li key={c.id}><strong>{c.name}</strong>{c.character&&<span>{c.character}</span>}</li>)}</ul></div>;
+      return items.length>0&&<div key={group.key} className="credit-group"><h4>{group.label}</h4><ul>{items.map(c=><li key={c.id}><NavigationLink className="person-link" href={personPath(c.person_id)} navigate={navigate}>{c.name}</NavigationLink>{c.character&&<span>{c.character}</span>}</li>)}</ul></div>;
     })}
   </section>;
 }

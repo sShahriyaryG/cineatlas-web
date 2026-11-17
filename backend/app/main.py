@@ -271,9 +271,9 @@ def list_persons(q: str = '', page: int = Query(1, ge=1), size: int = Query(20, 
 @app.get('/api/persons/{person_id}')
 def person_detail(person_id: int, db: Session = Depends(get_db)):
     person = must_person(db, person_id)
-    credits = db.execute(select(MovieCredit, Movie.title, Movie.year).join(Movie, Movie.id == MovieCredit.movie_id)
+    credits = db.execute(select(MovieCredit, Movie.title, Movie.year, Movie.poster_url).join(Movie, Movie.id == MovieCredit.movie_id)
                          .where(MovieCredit.person_id == person_id).order_by(Movie.year.desc(), Movie.id, MovieCredit.id))
-    return {**person_out(person), 'credits': [dict(movie_id=c.movie_id, title=title, year=year, role=c.role, character=c.character) for c, title, year in credits]}
+    return {**person_out(person), 'credits': [dict(movie_id=c.movie_id, title=title, year=year, role=c.role, character=c.character, poster_url=poster_url) for c, title, year, poster_url in credits]}
 
 @app.post('/api/persons', status_code=201)
 def create_person(payload: PersonInput, db: Session = Depends(get_db), user: User = Depends(require_role('admin'))):
