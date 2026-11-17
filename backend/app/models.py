@@ -28,6 +28,8 @@ class Movie(Base):
     language: Mapped[str] = mapped_column(String(100),default='')
     country: Mapped[str] = mapped_column(String(100),default='')
     legacy_id: Mapped[str | None] = mapped_column(String(50),unique=True,nullable=True)
+    genre_entries: Mapped[list['Genre']] = relationship(secondary='movie_genres', lazy='selectin', order_by='Genre.key')
+    credits: Mapped[list['MovieCredit']] = relationship(back_populates='movie', cascade='all, delete-orphan')
     __table_args__=(CheckConstraint('year >= 1888 AND year <= 2200',name='valid_year'),)
 
 class Rating(Base):
@@ -84,3 +86,36 @@ class MovieSource(Base):
     movie_id: Mapped[int] = mapped_column(ForeignKey('movies.id', ondelete='CASCADE'), index=True)
     imported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     __table_args__ = (UniqueConstraint('source', 'movie_id', name='uq_movie_sources_source_movie'),)
+
+
+class Genre(Base):
+    __tablename__ = 'genres'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    key: Mapped[str] = mapped_column(String(512), unique=True)
+    name: Mapped[str] = mapped_column(String(512))
+
+class MovieGenre(Base):
+    __tablename__ = 'movie_genres'
+    movie_id: Mapped[int] = mapped_column(ForeignKey('movies.id', ondelete='CASCADE'), primary_key=True)
+    genre_id: Mapped[int] = mapped_column(ForeignKey('genres.id', ondelete='CASCADE'), primary_key=True, index=True)
+
+class Person(Base):
+    __tablename__ = 'persons'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(240), index=True)
+    biography: Mapped[str] = mapped_column(Text, default='')
+
+class MovieCredit(Base):
+    __tablename__ = 'movie_credits'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    movie_id: Mapped[int] = mapped_column(ForeignKey('movies.id', ondelete='CASCADE'), index=True)
+    person_id: Mapped[int] = mapped_column(ForeignKey('persons.id', ondelete='CASCADE'), index=True)
+    role: Mapped[str] = mapped_column(String(16))
+    character: Mapped[str] = mapped_column(String(240), default='')
+    movie: Mapped[Movie] = relationship(back_populates='credits')
+    person: Mapped[Person] = relationship(lazy='joined')
+    __table_args__ = (
+        UniqueConstraint('movie_id', 'person_id', 'role', 'character', name='uq_movie_credit'),
+        CheckConstraint("role IN ('actor','director','writer','producer')", name='valid_credit_role'),
+        CheckConstraint("role = 'actor' OR character = ''", name='valid_credit_character'),
+    )
