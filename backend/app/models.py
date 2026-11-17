@@ -75,3 +75,12 @@ class Report(Base):
     review_id: Mapped[int] = mapped_column(ForeignKey('reviews.id'))
     reason: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(12),default='pending')
+
+class MovieSource(Base):
+    """External identity of a catalog record, independent of legacy UUIDs."""
+    __tablename__ = 'movie_sources'
+    source: Mapped[str] = mapped_column(String(32), primary_key=True)
+    external_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    movie_id: Mapped[int] = mapped_column(ForeignKey('movies.id', ondelete='CASCADE'), index=True)
+    imported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    __table_args__ = (UniqueConstraint('source', 'movie_id', name='uq_movie_sources_source_movie'),)
