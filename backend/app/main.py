@@ -10,7 +10,8 @@ from sqlalchemy import select, func, or_
 from sqlalchemy.exc import IntegrityError
 from .db import Base,engine,get_db
 from .models import User,Movie,Rating,Review,Watchlist,EditSuggestion,Report,MovieSource,Genre,MovieGenre,Person,MovieCredit,MovieEnrichmentField
-from .catalog import genre_key, set_movie_genres, parse_genres
+from .catalog import set_movie_genres, parse_genres
+from .search import catalog_page, SearchMode, SortMode, GenreMode
 from .security import hash_password,verify_password,create_token,revoke_token,current_user,require_role
 from fastapi.security import HTTPBearer,HTTPAuthorizationCredentials
 
@@ -57,8 +58,8 @@ class ProfileInput(BaseModel): bio:str=Field(max_length=1000)
 class UserRoleInput(BaseModel): role:Literal["member", "editor"]
 
 def safe_user(u): return {'id':u.id,'username':u.username,'role':u.role,'bio':u.bio}
-def movie_out(db,m):
-    avg,count=db.execute(select(func.avg(Rating.score),func.count(Rating.id)).where(Rating.movie_id==m.id)).one()
+def movie_out(db,m,summary=None):
+    avg,count=summary if summary is not None else db.execute(select(func.avg(Rating.score),func.count(Rating.id)).where(Rating.movie_id==m.id)).one()
     return {'id':m.id,'title':m.title,'year':m.year,'genres':[g.name for g in m.genre_entries],'synopsis':m.synopsis,'poster_url':m.poster_url,'runtime':m.runtime,'language':m.language,'country':m.country,'average_rating':round(float(avg),1) if avg is not None else None,'rating_count':count}
 def must_movie(db,id):
     m=db.get(Movie,id)
@@ -91,17 +92,23 @@ def update_profile(payload:ProfileInput,user:User=Depends(current_user),db:Sessi
     user.bio=payload.bio;db.commit();return safe_user(user)
 
 @app.get('/api/movies')
-def movies(q:str='',genre:str='',year:int|None=None,sort:str='title',page:int=Query(1,ge=1),size:int=Query(12,ge=1,le=50),db:Session=Depends(get_db)):
-    stmt=select(Movie)
-    if q:stmt=stmt.where(or_(Movie.title.ilike(f'%{q.replace("%", "\\%")}%'),Movie.synopsis.ilike(f'%{q.replace("%", "\\%")}%')))
-    if genre:stmt=stmt.where(Movie.genre_entries.any(Genre.key == genre_key(genre)))
-    if year:stmt=stmt.where(Movie.year==year)
-    total=db.scalar(select(func.count()).select_from(stmt.subquery()))
-    if sort=='newest':stmt=stmt.order_by(Movie.year.desc(),Movie.title)
-    elif sort=='oldest':stmt=stmt.order_by(Movie.year,Movie.title)
-    else:stmt=stmt.order_by(Movie.title)
-    items=db.scalars(stmt.offset((page-1)*size).limit(size)).all()
-    return {'items':[movie_out(db,m) for m in items],'total':total,'page':page,'size':size}
+def movies(q:str=Query('',max_length=200),mode:SearchMode='title',
+           genre:str=Query('',max_length=512),genres:Annotated[list[str]|None,Query(max_length=20)]=None,
+           genre_mode:GenreMode='and',year:int|None=Query(None,ge=1888,le=2200),
+           year_min:int|None=Query(None,ge=1888,le=2200),year_max:int|None=Query(None,ge=1888,le=2200),
+           rating_min:float|None=Query(None,ge=1,le=10),rating_max:float|None=Query(None,ge=1,le=10),
+           sort:SortMode='relevance',page:int=Query(1,ge=1,le=100000),size:int=Query(12,ge=1,le=50),
+           db:Session=Depends(get_db)):
+    labels=[genre,*(genres or [])]
+    if any(len(g)>512 or '\x00' in g for g in labels) or '\x00' in q:
+        raise HTTPException(422,'Invalid search text or genre label')
+    if year_min is not None and year_max is not None and year_min>year_max:
+        raise HTTPException(422,'Minimum year must not exceed maximum year')
+    if rating_min is not None and rating_max is not None and rating_min>rating_max:
+        raise HTTPException(422,'Minimum rating must not exceed maximum rating')
+    items,total=catalog_page(db,q=q,mode=mode,genres=labels,genre_mode=genre_mode,year=year,
+        year_min=year_min,year_max=year_max,rating_min=rating_min,rating_max=rating_max,sort=sort,page=page,size=size)
+    return {'items':[movie_out(db,m,(avg,count)) for m,avg,count in items],'total':total,'page':page,'size':size}
 @app.get('/api/genres')
 def genres(db:Session=Depends(get_db)):
     return list(db.scalars(select(Genre.name).join(MovieGenre).distinct().order_by(Genre.name)))
