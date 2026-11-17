@@ -1,5 +1,7 @@
 # CineAtlas · Full-stack movie discovery (v0.3)
 
+[![CI](https://github.com/sShahriyaryG/cineatlas-web/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/sShahriyaryG/cineatlas-web/actions/workflows/ci.yml)
+
 A full-stack movie discovery and management platform evolved from an IMDb-style Python university project.
 
 ## Stack
