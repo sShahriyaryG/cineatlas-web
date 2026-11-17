@@ -91,7 +91,7 @@ export function AdminStudio({request, onCatalogChange}: {request: Api; onCatalog
         <div className="studio-form-grid">
           <label>Title *<input required maxLength={240} value={form.title} onChange={e=>update('title',e.target.value)}/></label>
           <label>Release year *<input required type="number" min="1888" max="2200" value={form.year} onChange={e=>update('year',e.target.value)}/></label>
-          <label>Genres (comma-separated)<input maxLength={255} value={form.genres} onChange={e=>update('genres',e.target.value)} placeholder="Drama, Sci-Fi"/></label>
+          <label>Genres (comma-separated)<input maxLength={4096} value={form.genres} onChange={e=>update('genres',e.target.value)} placeholder="Drama, Sci-Fi"/></label>
           <label>Runtime in minutes<input type="number" min="1" max="10000" value={form.runtime} onChange={e=>update('runtime',e.target.value)}/></label>
           <label>Language<input maxLength={100} value={form.language} onChange={e=>update('language',e.target.value)}/></label>
           <label>Country<input maxLength={100} value={form.country} onChange={e=>update('country',e.target.value)}/></label>

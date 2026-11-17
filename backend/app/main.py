@@ -4,12 +4,13 @@ from datetime import datetime
 from typing import Annotated, Literal
 from fastapi import FastAPI, Depends, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field, EmailStr, ConfigDict
+from pydantic import BaseModel, Field, EmailStr, ConfigDict, field_validator
 from sqlalchemy.orm import Session
 from sqlalchemy import select, func, or_
 from sqlalchemy.exc import IntegrityError
 from .db import Base,engine,get_db
-from .models import User,Movie,Rating,Review,Watchlist,EditSuggestion,Report,MovieSource
+from .models import User,Movie,Rating,Review,Watchlist,EditSuggestion,Report,MovieSource,Genre,MovieGenre,Person,MovieCredit
+from .catalog import genre_key, set_movie_genres, parse_genres
 from .security import hash_password,verify_password,create_token,revoke_token,current_user,require_role
 from fastapi.security import HTTPBearer,HTTPAuthorizationCredentials
 
@@ -30,7 +31,12 @@ class Login(BaseModel):
 class MovieInput(BaseModel):
     title: str=Field(min_length=1,max_length=240)
     year: int=Field(ge=1888,le=2200)
-    genres: str=Field(max_length=255)
+    genres: str=Field(max_length=4096)
+    @field_validator("genres")
+    @classmethod
+    def valid_genres(cls, value):
+        parse_genres(value)
+        return value
     synopsis: str=Field(default='',max_length=10000)
     poster_url: str=Field(default='',max_length=600)
     runtime: int | None=Field(default=None,ge=1,le=10000)
@@ -53,7 +59,7 @@ class UserRoleInput(BaseModel): role:Literal["member", "editor"]
 def safe_user(u): return {'id':u.id,'username':u.username,'role':u.role,'bio':u.bio}
 def movie_out(db,m):
     avg,count=db.execute(select(func.avg(Rating.score),func.count(Rating.id)).where(Rating.movie_id==m.id)).one()
-    return {'id':m.id,'title':m.title,'year':m.year,'genres':m.genres.split(',') if m.genres else [],'synopsis':m.synopsis,'poster_url':m.poster_url,'runtime':m.runtime,'language':m.language,'country':m.country,'average_rating':round(float(avg),1) if avg is not None else None,'rating_count':count}
+    return {'id':m.id,'title':m.title,'year':m.year,'genres':[g.name for g in m.genre_entries],'synopsis':m.synopsis,'poster_url':m.poster_url,'runtime':m.runtime,'language':m.language,'country':m.country,'average_rating':round(float(avg),1) if avg is not None else None,'rating_count':count}
 def must_movie(db,id):
     m=db.get(Movie,id)
     if not m:raise HTTPException(404,'Movie not found')
@@ -88,7 +94,7 @@ def update_profile(payload:ProfileInput,user:User=Depends(current_user),db:Sessi
 def movies(q:str='',genre:str='',year:int|None=None,sort:str='title',page:int=Query(1,ge=1),size:int=Query(12,ge=1,le=50),db:Session=Depends(get_db)):
     stmt=select(Movie)
     if q:stmt=stmt.where(or_(Movie.title.ilike(f'%{q.replace("%", "\\%")}%'),Movie.synopsis.ilike(f'%{q.replace("%", "\\%")}%')))
-    if genre:stmt=stmt.where(Movie.genres.ilike(f'%{genre}%'))
+    if genre:stmt=stmt.where(Movie.genre_entries.any(Genre.key == genre_key(genre)))
     if year:stmt=stmt.where(Movie.year==year)
     total=db.scalar(select(func.count()).select_from(stmt.subquery()))
     if sort=='newest':stmt=stmt.order_by(Movie.year.desc(),Movie.title)
@@ -98,17 +104,18 @@ def movies(q:str='',genre:str='',year:int|None=None,sort:str='title',page:int=Qu
     return {'items':[movie_out(db,m) for m in items],'total':total,'page':page,'size':size}
 @app.get('/api/genres')
 def genres(db:Session=Depends(get_db)):
-    return sorted({g.strip() for m in db.scalars(select(Movie.genres)) for g in m.split(',') if g.strip()})
+    return list(db.scalars(select(Genre.name).join(MovieGenre).distinct().order_by(Genre.name)))
 @app.get('/api/movies/{movie_id}')
 def movie_detail(movie_id:int,db:Session=Depends(get_db)):
     return movie_out(db,must_movie(db,movie_id))
 @app.post('/api/movies',status_code=201)
 def create_movie(payload:MovieInput,db:Session=Depends(get_db),user:User=Depends(require_role('admin'))):
-    m=Movie(**payload.model_dump());db.add(m);db.commit();db.refresh(m);return movie_out(db,m)
+    m=Movie(**payload.model_dump(exclude={'genres'}));set_movie_genres(db,m,payload.genres);db.add(m);db.commit();db.refresh(m);return movie_out(db,m)
 @app.put('/api/movies/{movie_id}')
 def update_movie(movie_id:int,payload:MovieInput,db:Session=Depends(get_db),user:User=Depends(require_role('admin'))):
     m=must_movie(db,movie_id)
-    for k,v in payload.model_dump().items():setattr(m,k,v)
+    for k,v in payload.model_dump(exclude={'genres'}).items():setattr(m,k,v)
+    set_movie_genres(db,m,payload.genres)
     db.commit();return movie_out(db,m)
 @app.delete('/api/movies/{movie_id}',status_code=204)
 def delete_movie(movie_id:int,db:Session=Depends(get_db),user:User=Depends(require_role('admin'))):
@@ -165,10 +172,10 @@ def recommendations(user:User=Depends(current_user),db:Session=Depends(get_db)):
     weights=Counter()
     for r,m in ratings:
         if r.score>=7:
-            for g in m.genres.split(','):weights[g.strip()]+=r.score-5
+            for g in m.genre_entries:weights[g.id]+=r.score-5
     seen={r.movie_id for r,m in ratings}
     movies=db.scalars(select(Movie)).all()
-    ranked=sorted((m for m in movies if m.id not in seen),key=lambda m:sum(weights[g.strip()] for g in m.genres.split(',')),reverse=True)
+    ranked=sorted((m for m in movies if m.id not in seen),key=lambda m:sum(weights[g.id] for g in m.genre_entries),reverse=True)
     return [movie_out(db,m) for m in ranked[:8]]
 
 @app.post('/api/movies/{movie_id}/suggestions',status_code=201)
@@ -220,3 +227,84 @@ def decide_report(id:int,decision:str,user:User=Depends(require_role('admin')),d
 @app.get('/api/admin/stats')
 def stats(user:User=Depends(require_role('admin')),db:Session=Depends(get_db)):
     return {'users':db.scalar(select(func.count(User.id))),'movies':db.scalar(select(func.count(Movie.id))),'reviews':db.scalar(select(func.count(Review.id))),'ratings':db.scalar(select(func.count(Rating.id)))}
+
+class PersonInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+    name: str = Field(min_length=1, max_length=240)
+    biography: str = Field(default='', max_length=10000)
+
+class CreditInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+    person_id: int = Field(gt=0)
+    role: Literal['actor', 'director', 'writer', 'producer']
+    character: str = Field(default='', max_length=240)
+
+def person_out(person):
+    return {'id': person.id, 'name': person.name, 'biography': person.biography}
+
+def credit_out(credit):
+    return {'id': credit.id, 'person_id': credit.person_id, 'name': credit.person.name,
+            'role': credit.role, 'character': credit.character}
+
+def must_person(db, person_id):
+    person = db.get(Person, person_id)
+    if not person:
+        raise HTTPException(404, 'Person not found')
+    return person
+
+@app.get('/api/persons')
+def list_persons(q: str = '', page: int = Query(1, ge=1), size: int = Query(20, ge=1, le=50), db: Session = Depends(get_db)):
+    stmt = select(Person)
+    if q:
+        stmt = stmt.where(Person.name.icontains(q, autoescape=True))
+    total = db.scalar(select(func.count()).select_from(stmt.subquery()))
+    items = db.scalars(stmt.order_by(Person.name, Person.id).offset((page-1)*size).limit(size))
+    return {'items': [person_out(p) for p in items], 'total': total, 'page': page, 'size': size}
+
+@app.get('/api/persons/{person_id}')
+def person_detail(person_id: int, db: Session = Depends(get_db)):
+    person = must_person(db, person_id)
+    credits = db.execute(select(MovieCredit, Movie.title, Movie.year).join(Movie, Movie.id == MovieCredit.movie_id)
+                         .where(MovieCredit.person_id == person_id).order_by(Movie.year.desc(), Movie.id, MovieCredit.id))
+    return {**person_out(person), 'credits': [dict(movie_id=c.movie_id, title=title, year=year, role=c.role, character=c.character) for c, title, year in credits]}
+
+@app.post('/api/persons', status_code=201)
+def create_person(payload: PersonInput, db: Session = Depends(get_db), user: User = Depends(require_role('admin'))):
+    person = Person(**payload.model_dump())
+    db.add(person); db.commit()
+    return person_out(person)
+
+@app.put('/api/persons/{person_id}')
+def update_person(person_id: int, payload: PersonInput, db: Session = Depends(get_db), user: User = Depends(require_role('admin'))):
+    person = must_person(db, person_id)
+    person.name = payload.name; person.biography = payload.biography
+    db.commit()
+    return person_out(person)
+
+@app.get('/api/movies/{movie_id}/credits')
+def movie_credits(movie_id: int, db: Session = Depends(get_db)):
+    movie = must_movie(db, movie_id)
+    return [credit_out(c) for c in sorted(movie.credits, key=lambda c: (c.role, c.person.name.casefold(), c.id))]
+
+@app.post('/api/movies/{movie_id}/credits', status_code=201)
+def create_credit(movie_id: int, payload: CreditInput, db: Session = Depends(get_db), user: User = Depends(require_role('admin'))):
+    must_movie(db, movie_id)
+    must_person(db, payload.person_id)
+    if payload.role != 'actor' and payload.character:
+        raise HTTPException(422, 'Only actors may have a character name')
+    credit = MovieCredit(movie_id=movie_id, **payload.model_dump())
+    db.add(credit)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, 'Credit already exists or catalog changed')
+    return credit_out(credit)
+
+@app.delete('/api/movies/{movie_id}/credits/{credit_id}', status_code=204)
+def delete_credit(movie_id: int, credit_id: int, db: Session = Depends(get_db), user: User = Depends(require_role('admin'))):
+    credit = db.get(MovieCredit, credit_id)
+    if not credit or credit.movie_id != movie_id:
+        raise HTTPException(404, 'Credit not found')
+    db.delete(credit); db.commit()
+    return Response(status_code=204)

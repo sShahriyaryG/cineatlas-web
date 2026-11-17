@@ -11,7 +11,7 @@ docker compose up -d --build api
 docker compose exec api alembic current
 ```
 
-The head revision should be `0002_movie_sources`. This additive migration creates a provenance table and keeps existing movie IDs, users, ratings and reviews. As with any database migration, back up important data first.
+The head revision should be `0003_catalog_relations`. The additive migrations create a provenance table and normalized catalog relationships, keeping existing movie IDs, users, ratings and reviews. See [catalog data model](catalog-model.md). As with any database migration, back up important data first.
 
 Fetch a CSV snapshot (internet access to `query.wikidata.org` required):
 
@@ -45,7 +45,7 @@ Then run the same dry-run/import commands. If the endpoint cannot be accessed fr
 ## Pipeline design
 
 1. **Extract** — Version-controlled SPARQL query produces a CSV snapshot with headers `film,title,year,genres,runtime,imdb`. The query chooses the earliest reported publication year, groups distinct English genre labels, and uses the minimum valid duration in minutes when several are available.
-2. **Transform** — Normalize Unicode and whitespace, validate Wikidata QIDs and field lengths, validate year and runtime ranges, deduplicate genre labels, map common genre names, and fit the current comma-separated genre field. Missing genres/runtime remain empty/NULL. Genre labels that do not fit the 255-character limit are omitted, never split.
+2. **Transform** — Normalize Unicode and whitespace, validate Wikidata QIDs and field lengths, validate year and runtime ranges, deduplicate and normalize genre labels. Missing genres/runtime remain empty/NULL. New imports store complete normalized labels (up to 512 characters per label and 4096 characters for the joined list) in shared genre records and movie-genre links. A bounded legacy text representation remains for backward compatibility; it is not used for filtering. Older imports may have omitted labels due to the previous 255-character limit; existing source rows are not overwritten.
 3. **Load** — Insert new movie records and their source identifiers in one transaction. A composite primary key on `movie_sources(source, external_id)` enforces source identity uniqueness. Existing source identifiers, repeated input IDs, and matching normalized title/year pairs are skipped. The title/year comparison is a conservative heuristic, not an identity guarantee. No existing row is automatically overwritten, linked, or deleted.
 4. **Observe** — JSON reports track input rows, inserts, previously imported IDs, repeated input IDs, possible title/year conflicts, invalid rows, and up to 30 diagnostic messages.
 

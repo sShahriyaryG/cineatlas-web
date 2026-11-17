@@ -1,5 +1,6 @@
 from app.db import SessionLocal
 from app.models import Movie,User
+from app.catalog import set_movie_genres
 from app.security import hash_password
 
 def headers(c,username='sara',email='sara@example.org'):
@@ -8,13 +9,16 @@ def headers(c,username='sara',email='sara@example.org'):
     return {'Authorization':'Bearer '+r.json()['token']}
 def seed():
     with SessionLocal() as db:
-        db.add_all([Movie(title='Orbit',year=2020,genres='Sci-Fi,Drama',synopsis='A journey through space'),Movie(title='Summer Light',year=2021,genres='Drama,Romance',synopsis='A story of friendship')]);db.commit()
+        for title,year,genres,synopsis in [('Orbit',2020,'Sci-Fi,Drama','A journey through space'),('Summer Light',2021,'Drama,Romance','A story of friendship')]:
+            movie=Movie(title=title,year=year,synopsis=synopsis)
+            set_movie_genres(db,movie,genres);db.add(movie)
+        db.commit()
 
 def test_catalog_filters_and_details(client):
     seed();r=client.get('/api/movies',params={'q':'Orbit'});assert r.status_code==200;assert r.json()['total']==1
     assert client.get('/api/movies',params={'genre':'Sci-Fi'}).json()['total']==1
     assert client.get('/api/movies/999').status_code==404
-    assert client.get('/api/genres').json()==['Drama','Romance','Sci-Fi']
+    assert client.get('/api/genres').json()==['Drama','Romance','Science Fiction']
 def test_auth_validation_and_permissions(client):
     h=headers(client)
     assert client.post('/api/auth/register',json={'username':'sara','email':'other@example.com','password':'complex-password-123'}).status_code==409

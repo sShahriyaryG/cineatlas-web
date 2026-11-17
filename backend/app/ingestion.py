@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .models import Movie, MovieSource
+from .catalog import set_movie_genres, parse_genres
 
 SOURCE = 'wikidata'
 COLUMNS = {'film', 'title', 'year', 'genres', 'runtime'}
@@ -27,24 +28,12 @@ def title_key(title: str, year: int) -> tuple[str, int]:
 
 
 def genres_from(value: str) -> str:
-    # Keep source vocabulary, with a few consistent labels for existing UI filters.
-    aliases = {'science fiction film': 'Science Fiction', 'science fiction': 'Science Fiction',
-               'sci-fi': 'Science Fiction', 'action film': 'Action', 'comedy film': 'Comedy',
-               'drama film': 'Drama', 'horror film': 'Horror', 'thriller film': 'Thriller',
-               'animated film': 'Animation', 'adventure film': 'Adventure', 'crime film': 'Crime',
-               'romance film': 'Romance', 'fantasy film': 'Fantasy', 'western film': 'Western',
-               'documentary film': 'Documentary', 'film noir': 'Film Noir'}
-    result: dict[str, str] = {}
-    for raw in value.split('|'):
-        label = clean(raw).replace(',', ' / ')
-        if label:
-            label = aliases.get(label.casefold(), label.title())
-            result.setdefault(label.casefold(), label)
-    chosen: list[str] = []
-    for label in sorted(result.values(), key=str.casefold):
-        if len(','.join([*chosen, label])) <= 255:
-            chosen.append(label)
-    return ','.join(chosen)
+    # Keep subgenres, but normalize known aliases and avoid comma ambiguity.
+    names = parse_genres(','.join(clean(raw).replace(',', ' / ') for raw in value.split('|')))
+    result = ','.join(names.values())
+    if len(result) > 4096:
+        raise ValueError('genre list exceeds 4096 characters')
+    return result
 
 
 @dataclass(frozen=True)
@@ -131,7 +120,8 @@ def ingest(db: Session, stream: TextIO, *, dry_run: bool = False, strict: bool =
             report.issue(line, f'{record.source_id}: existing title/year; manual review required')
             continue
         if not dry_run:
-            movie = Movie(title=record.title, year=record.year, genres=record.genres, runtime=record.runtime)
+            movie = Movie(title=record.title, year=record.year, runtime=record.runtime)
+            set_movie_genres(db, movie, record.genres)
             db.add(movie)
             db.flush()
             db.add(MovieSource(source=SOURCE, external_id=record.source_id, movie_id=movie.id))
