@@ -11,7 +11,7 @@ docker compose up -d --build api
 docker compose exec api alembic current
 ```
 
-The head revision should be `0003_catalog_relations`. The additive migrations create a provenance table and normalized catalog relationships, keeping existing movie IDs, users, ratings and reviews. See [catalog data model](catalog-model.md). As with any database migration, back up important data first.
+The head revision should be `0004_enrichment_sources` (or a later migration). The additive migrations create a provenance table and normalized catalog relationships, keeping existing movie IDs, users, ratings and reviews. See [catalog data model](catalog-model.md). As with any database migration, back up important data first.
 
 Fetch a CSV snapshot (internet access to `query.wikidata.org` required):
 
@@ -53,7 +53,7 @@ Run one importer at a time. A concurrent uniqueness conflict rolls back the impo
 
 ## Data scope and licensing
 
-This is a starter selection, not a comprehensive or ranked catalog. Wikidata records can be incomplete or inaccurate and can change over time. The query intentionally does not fetch posters, plot summaries, ratings, or external user data. Missing metadata stays missing instead of fabricated. Wikidata's CC0 data terms do not automatically cover images or third-party sites linked from Wikidata. Posters and richer metadata require a separate rights-aware integration.
+This is a starter selection, not a comprehensive or ranked catalog. Wikidata records can be incomplete or inaccurate and can change over time. The query intentionally does not fetch posters, plot summaries, ratings, or external user data. Missing metadata stays missing instead of fabricated. Wikidata's CC0 data terms do not automatically cover images or third-party sites linked from Wikidata. Posters and richer metadata are handled separately by the optional [TMDB enrichment pipeline](movie-enrichment.md).
 
 ## Tests
 

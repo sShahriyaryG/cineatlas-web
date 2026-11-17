@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import select, func, or_
 from sqlalchemy.exc import IntegrityError
 from .db import Base,engine,get_db
-from .models import User,Movie,Rating,Review,Watchlist,EditSuggestion,Report,MovieSource,Genre,MovieGenre,Person,MovieCredit
+from .models import User,Movie,Rating,Review,Watchlist,EditSuggestion,Report,MovieSource,Genre,MovieGenre,Person,MovieCredit,MovieEnrichmentField
 from .catalog import genre_key, set_movie_genres, parse_genres
 from .security import hash_password,verify_password,create_token,revoke_token,current_user,require_role
 from fastapi.security import HTTPBearer,HTTPAuthorizationCredentials
@@ -122,7 +122,7 @@ def delete_movie(movie_id:int,db:Session=Depends(get_db),user:User=Depends(requi
     m=must_movie(db,movie_id)
     review_ids=select(Review.id).where(Review.movie_id==movie_id)
     db.query(Report).filter(Report.review_id.in_(review_ids)).delete(synchronize_session=False)
-    for model in [Rating,Review,Watchlist,EditSuggestion,MovieSource]:db.query(model).filter(model.movie_id==movie_id).delete(synchronize_session=False)
+    for model in [Rating,Review,Watchlist,EditSuggestion,MovieSource,MovieEnrichmentField]:db.query(model).filter(model.movie_id==movie_id).delete(synchronize_session=False)
     db.delete(m);db.commit();return Response(status_code=204)
 
 @app.put('/api/movies/{movie_id}/rating')
