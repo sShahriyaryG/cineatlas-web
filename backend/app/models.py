@@ -62,6 +62,7 @@ class EditSuggestion(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     movie_id: Mapped[int] = mapped_column(ForeignKey('movies.id'))
     user_id: Mapped[int] = mapped_column(ForeignKey('users.id'))
+    movie: Mapped[Movie] = relationship()
     synopsis: Mapped[str] = mapped_column(Text)
     reason: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(12),default='pending')

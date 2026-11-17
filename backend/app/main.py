@@ -1,7 +1,7 @@
 from contextlib import asynccontextmanager
 from collections import Counter
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Literal
 from fastapi import FastAPI, Depends, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, EmailStr, ConfigDict
@@ -17,7 +17,7 @@ from fastapi.security import HTTPBearer,HTTPAuthorizationCredentials
 async def lifespan(app):
     Base.metadata.create_all(bind=engine) # development convenience; deploy with migrations
     yield
-app=FastAPI(title='CineAtlas API',version='0.2.0',lifespan=lifespan)
+app=FastAPI(title='CineAtlas API',version='0.3.0',lifespan=lifespan)
 app.add_middleware(CORSMiddleware,allow_origins=['http://localhost:5173','http://127.0.0.1:5173'],allow_credentials=False,allow_methods=['GET','POST','PUT','DELETE','PATCH'],allow_headers=['Authorization','Content-Type'])
 
 class SignUp(BaseModel):
@@ -44,8 +44,11 @@ class ReviewInput(BaseModel):
 class SuggestionInput(BaseModel):
     synopsis:str=Field(min_length=5,max_length=10000)
     reason:str=Field(min_length=5,max_length=1000)
-class ReportInput(BaseModel): reason:str=Field(min_length=5,max_length=1000)
+class ReportInput(BaseModel):
+    model_config=ConfigDict(str_strip_whitespace=True)
+    reason:str=Field(min_length=5,max_length=1000)
 class ProfileInput(BaseModel): bio:str=Field(max_length=1000)
+class UserRoleInput(BaseModel): role:Literal["member", "editor"]
 
 def safe_user(u): return {'id':u.id,'username':u.username,'role':u.role,'bio':u.bio}
 def movie_out(db,m):
@@ -172,9 +175,29 @@ def recommendations(user:User=Depends(current_user),db:Session=Depends(get_db)):
 def suggest(movie_id:int,payload:SuggestionInput,user:User=Depends(require_role('editor','admin')),db:Session=Depends(get_db)):
     must_movie(db,movie_id)
     s=EditSuggestion(movie_id=movie_id,user_id=user.id,**payload.model_dump());db.add(s);db.commit();return {'id':s.id,'status':s.status}
+@app.get('/api/me/suggestions')
+def my_suggestions(user:User=Depends(require_role('editor','admin')),db:Session=Depends(get_db)):
+    items=db.scalars(select(EditSuggestion).where(EditSuggestion.user_id==user.id).order_by(EditSuggestion.id.desc())).all()
+    return [{'id':s.id,'movie_id':s.movie_id,'movie_title':s.movie.title,'synopsis':s.synopsis,'reason':s.reason,'status':s.status} for s in items]
+
+@app.get('/api/admin/users')
+def list_users(user:User=Depends(require_role('admin')),db:Session=Depends(get_db)):
+    items=db.scalars(select(User).order_by(User.username)).all()
+    return [{'id':u.id,'username':u.username,'email':u.email,'role':u.role,'is_active':u.is_active} for u in items]
+
+@app.patch('/api/admin/users/{user_id}/role')
+def change_user_role(user_id:int,payload:UserRoleInput,user:User=Depends(require_role('admin')),db:Session=Depends(get_db)):
+    target=db.get(User,user_id)
+    if not target:raise HTTPException(404,'User not found')
+    if target.role=='admin':raise HTTPException(409,'Admin accounts must be managed locally')
+    if not target.is_active:raise HTTPException(409,'Cannot change an inactive account')
+    target.role=payload.role
+    db.commit()
+    return {'id':target.id,'username':target.username,'role':target.role}
+
 @app.get('/api/admin/suggestions')
 def suggestions(user:User=Depends(require_role('admin')),db:Session=Depends(get_db)):
-    return [{'id':s.id,'movie_id':s.movie_id,'synopsis':s.synopsis,'reason':s.reason,'status':s.status} for s in db.scalars(select(EditSuggestion).order_by(EditSuggestion.id.desc()))]
+    return [{'id':s.id,'movie_id':s.movie_id,'movie_title':s.movie.title,'current_synopsis':s.movie.synopsis,'submitted_by':db.get(User,s.user_id).username,'synopsis':s.synopsis,'reason':s.reason,'status':s.status} for s in db.scalars(select(EditSuggestion).order_by(EditSuggestion.id.desc()))]
 @app.post('/api/admin/suggestions/{id}/{decision}')
 def decide(id:int,decision:str,user:User=Depends(require_role('admin')),db:Session=Depends(get_db)):
     if decision not in ('approved','rejected'):raise HTTPException(422,'Invalid decision')
@@ -185,7 +208,7 @@ def decide(id:int,decision:str,user:User=Depends(require_role('admin')),db:Sessi
     s.status=decision;db.commit();return {'status':s.status}
 @app.get('/api/admin/reports')
 def reports(user:User=Depends(require_role('admin')),db:Session=Depends(get_db)):
-    return [{'id':r.id,'review_id':r.review_id,'reason':r.reason,'status':r.status} for r in db.scalars(select(Report).order_by(Report.id.desc()))]
+    return [{'id':r.id,'review_id':r.review_id,'review_title':db.get(Review,r.review_id).title,'review_body':db.get(Review,r.review_id).body,'movie_title':db.get(Movie,db.get(Review,r.review_id).movie_id).title,'reported_by':db.get(User,r.user_id).username,'reason':r.reason,'status':r.status} for r in db.scalars(select(Report).order_by(Report.id.desc()))]
 @app.post('/api/admin/reports/{id}/{decision}')
 def decide_report(id:int,decision:str,user:User=Depends(require_role('admin')),db:Session=Depends(get_db)):
     if decision not in ('dismissed','hidden'):raise HTTPException(422,'Invalid decision')
