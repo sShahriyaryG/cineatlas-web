@@ -3,10 +3,10 @@ import {Star,Film} from 'lucide-react';
 import {NavigationLink,type Navigate} from './NavigationLink';
 import {moviePath} from './navigation';
 import type {Movie} from './catalogTypes';
-const colors=['#263947','#352e49','#2d453e','#49313d'];
+const colors=['#3154bd','#203d35','#545965','#795347'];
 export function Poster({title,src,id,eager=false}:{title:string;src:string;id:number;eager?:boolean}){
   const [failed,setFailed]=useState('');
-  return <div className="poster" style={{background:`linear-gradient(150deg,${colors[id%colors.length]},#141820)`}}>
+  return <div className="poster" style={{background:`linear-gradient(150deg,${colors[Math.abs(id)%colors.length]},#202421)`}}>
     <span className="poster-placeholder" aria-hidden="true"><Film size={24}/><span>{title.slice(0,1).toUpperCase()}</span></span>
     {src&&failed!==src&&<img key={src} src={src} loading={eager?'eager':'lazy'} decoding="async" alt="" onError={()=>setFailed(src)}/>}
   </div>;
