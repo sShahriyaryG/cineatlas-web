@@ -4,7 +4,7 @@ import {useEffect, useState} from 'react';
 
 type Credit = { id:number; person_id:number; name:string; role:string; character:string };
 type Request = (path:string, options?:RequestInit)=>Promise<unknown>;
-const groups = [{key:'director',label:'Directed by'},{key:'writer',label:'Written by'}, {key:'actor',label:'Cast'}, {key:'producer',label:'Produced by'}];
+const groups = [{key:'director',label:'Directed by'},{key:'writer',label:'Written by'}, {key:'actor',label:'Cast'}, {key:'producer',label:'Produced by'},{key:'composer',label:'Music by'},{key:'cinematographer',label:'Cinematography'},{key:'editor',label:'Edited by'},{key:'other',label:'Other crew'}];
 
 export function MovieCredits({movieId,request,navigate}:{movieId:number;request:Request;navigate:Navigate}) {
   const [retry,setRetry]=useState(0);

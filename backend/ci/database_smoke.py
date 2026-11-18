@@ -27,7 +27,7 @@ def main():
 
     from app.db import Base, SessionLocal, engine
     from app import models
-    from app.models import MovieCredit, Person
+    from app.models import MovieCredit, Person, User, MovieMetadataOverride
     from fastapi.testclient import TestClient
 
     if args.require_postgresql and engine.dialect.name != 'postgresql':
@@ -41,7 +41,7 @@ def main():
     with engine.begin() as conn:
         movie_id = conn.execute(text('''
             INSERT INTO movies (title, year, genres, synopsis, poster_url, runtime, language, country)
-            VALUES (:title, 2020, :genres, :synopsis, '', 100, 'English', '') RETURNING id
+            VALUES (:title, 2020, :genres, :synopsis, '', 100, 'English', 'France') RETURNING id
         '''), {'title': 'CI Legacy Film', 'genres': 'Sci-Fi, Drama, science fiction film',
                'synopsis': 'A twist in the story'}).scalar_one()
     command.upgrade(config, 'head')
@@ -73,6 +73,9 @@ def main():
         assert movie['title'] == 'CI Legacy Film'
         assert movie['synopsis'] == 'A twist in the story'
         assert movie['genres'] == ['Drama', 'Science Fiction']
+        assert movie['language'] == 'English' and movie['country'] == 'France'
+        assert movie['production_countries'] == ['France']
+        assert movie['unspecified_languages'] == ['English'] and movie['original_language'] is None
         assert checked_json(client.get('/api/movies', params={'q': 'twi'}))['total'] == 0
         assert checked_json(client.get('/api/movies', params={'q': 'twi', 'mode': 'synopsis'}))['total'] == 1
         assert checked_json(client.get('/api/movies', params={'q': 'Example Director', 'mode': 'director'}))['total'] == 1
@@ -92,8 +95,34 @@ def main():
         assert len(checked_json(client.get('/api/me/watchlist', headers=headers))) == 1
         sessions = checked_json(client.get('/api/auth/sessions', headers=headers))
         assert len(sessions) == 1 and sessions[0]['current'] is True
+        # First verify the normal member cannot directly alter catalog metadata.
+        metadata_path = f'/api/movies/{movie_id}/metadata'
+        assert client.patch(metadata_path, json={'original_language':'English'}, headers=headers).status_code == 403
+        # Promote the disposable account to exercise admin endpoints; role is
+        # checked on every request so no new token is required.
+        with SessionLocal() as db:
+            db.get(User,result['user']['id']).role='admin'; db.commit()
+        enriched=checked_json(client.patch(metadata_path,headers=headers,json={
+            'original_language':'English','spoken_languages':['English','French'],
+            'production_countries':['France','Canada'],'tags':['Fixture'],
+            'certifications':[{'country':'Canada','rating':'PG'}],
+            'quotes':[{'quote':'Synthetic CI quotation','spoiler':True}]
+        }))
+        assert enriched['original_language']=='English' and enriched['unspecified_languages']==[]
+        assert enriched['production_countries']==['Canada','France'] and enriched['certifications'][0]['rating']=='PG'
+        assert enriched['quotes'][0]['spoiler'] is True
+        assert checked_json(client.patch(metadata_path,headers=headers,json={'quotes':[]}))['quotes']==[]
+        with SessionLocal() as db:
+            assert db.get(MovieMetadataOverride,(movie_id,'quotes')) is not None
+        person_meta=checked_json(client.patch(f'/api/persons/{person_id}/metadata',headers=headers,json={
+            'birthday':'1980-01-01','birthplace':'Synthetic City','nationalities':['Canada']
+        }))
+        assert person_meta['birthday']=='1980-01-01' and person_meta['nationalities']==['Canada']
+        checked_json(client.post(f'/api/movies/{movie_id}/credits',headers=headers,json={'person_id':person_id,'role':'composer'}),201)
+        assert {c['role'] for c in checked_json(client.get(f'/api/persons/{person_id}'))['credits']}=={'director','composer'}
         assert client.post('/api/auth/logout', headers=headers).status_code == 204
         assert client.get('/api/auth/me', headers=headers).status_code == 401
+    print('PASS: legacy language/country backfill, metadata permissions, manual overrides and extended credit roles.', flush=True)
     print('PASS: durable session creation and revocation.', flush=True)
     print('PASS: legacy genre backfill, title/synopsis/director search, filmography, auth, rating and watchlist.', flush=True)
     engine.dispose()

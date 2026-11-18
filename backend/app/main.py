@@ -9,8 +9,11 @@ from sqlalchemy.orm import Session
 from sqlalchemy import select, func, or_
 from sqlalchemy.exc import IntegrityError
 from .db import Base,engine,get_db
-from .models import User,Movie,Rating,Review,Watchlist,EditSuggestion,Report,MovieSource,Genre,MovieGenre,Person,MovieCredit,MovieEnrichmentField,AuthSession
+from .models import User,Movie,Rating,Review,Watchlist,EditSuggestion,Report,MovieSource,Genre,MovieGenre,Person,MovieCredit,MovieEnrichmentField,AuthSession,MovieMetadataOverride,PersonMetadataOverride
 from .catalog import set_movie_genres, parse_genres
+from .metadata import (MovieMetadataPatch, PersonMetadataPatch, CreditRole, movie_summary,
+    movie_metadata_out, person_metadata_out, apply_movie_metadata, apply_person_metadata,
+    sync_legacy_labels, check_legacy_update, MOVIE_EXTENSION_MODELS, record_overrides)
 from .search import catalog_page, SearchMode, SortMode, GenreMode
 from .security import (hash_password, verify_password, current_user, require_role, authenticate,
     issue_session, transport_for, quota, event, active_sessions, revoke_all, now, aware,
@@ -56,6 +59,11 @@ class MovieInput(BaseModel):
     runtime: int | None=Field(default=None,ge=1,le=10000)
     language: str=Field(default='',max_length=100)
     country: str=Field(default='',max_length=100)
+    @field_validator('language','country')
+    @classmethod
+    def valid_legacy_label(cls,value):
+        if '\x00' in value: raise ValueError('Invalid label')
+        return value
 class ScoreInput(BaseModel): score:int=Field(ge=1,le=10)
 class ReviewInput(BaseModel):
     title:str=Field(min_length=1,max_length=140)
@@ -73,7 +81,7 @@ class UserRoleInput(BaseModel): role:Literal["member", "editor"]
 def safe_user(u): return {'id':u.id,'username':u.username,'role':u.role,'bio':u.bio}
 def movie_out(db,m,summary=None):
     avg,count=summary if summary is not None else db.execute(select(func.avg(Rating.score),func.count(Rating.id)).where(Rating.movie_id==m.id)).one()
-    return {'id':m.id,'title':m.title,'year':m.year,'genres':[g.name for g in m.genre_entries],'synopsis':m.synopsis,'poster_url':m.poster_url,'runtime':m.runtime,'language':m.language,'country':m.country,'average_rating':round(float(avg),1) if avg is not None else None,'rating_count':count}
+    return {'id':m.id,'title':m.title,'year':m.year,'genres':[g.name for g in m.genre_entries],'synopsis':m.synopsis,'poster_url':m.poster_url,'runtime':m.runtime,'language':m.language,'country':m.country,**movie_summary(m),'average_rating':round(float(avg),1) if avg is not None else None,'rating_count':count}
 def must_movie(db,id):
     m=db.get(Movie,id)
     if not m:raise HTTPException(404,'Movie not found')
@@ -176,12 +184,26 @@ def movie_detail(movie_id:int,db:Session=Depends(get_db)):
     return movie_out(db,must_movie(db,movie_id))
 @app.post('/api/movies',status_code=201)
 def create_movie(payload:MovieInput,db:Session=Depends(get_db),user:User=Depends(require_role('admin'))):
-    m=Movie(**payload.model_dump(exclude={'genres'}));set_movie_genres(db,m,payload.genres);db.add(m);db.commit();db.refresh(m);return movie_out(db,m)
+    m=Movie(**payload.model_dump(exclude={'genres'}));set_movie_genres(db,m,payload.genres);db.add(m);db.flush()
+    sync_legacy_labels(db,m);db.commit();db.refresh(m);return movie_out(db,m)
 @app.put('/api/movies/{movie_id}')
 def update_movie(movie_id:int,payload:MovieInput,db:Session=Depends(get_db),user:User=Depends(require_role('admin'))):
     m=must_movie(db,movie_id)
-    for k,v in payload.model_dump(exclude={'genres'}).items():setattr(m,k,v)
+    values=payload.model_dump(exclude={'genres'})
+    for field in ('language','country'):
+        if field not in payload.model_fields_set: values[field]=getattr(m,field)
+    try: check_legacy_update(m,values['language'],values['country'])
+    except ValueError as exc: raise HTTPException(409,str(exc)) from exc
+    language_changed=values['language']!=m.language;country_changed=values['country']!=m.country
+    for k,v in values.items():setattr(m,k,v)
     set_movie_genres(db,m,payload.genres)
+    sync_legacy_labels(db,m,language_changed=language_changed,country_changed=country_changed)
+    fields=set()
+    if language_changed:
+        fields.add('unspecified_languages')
+        if not m.language.strip(): fields.update(('original_language','spoken_languages'))
+    if country_changed: fields.add('production_countries')
+    record_overrides(db,MovieMetadataOverride,'movie_id',m.id,fields)
     db.commit();return movie_out(db,m)
 @app.delete('/api/movies/{movie_id}',status_code=204)
 def delete_movie(movie_id:int,db:Session=Depends(get_db),user:User=Depends(require_role('admin'))):
@@ -189,6 +211,9 @@ def delete_movie(movie_id:int,db:Session=Depends(get_db),user:User=Depends(requi
     review_ids=select(Review.id).where(Review.movie_id==movie_id)
     db.query(Report).filter(Report.review_id.in_(review_ids)).delete(synchronize_session=False)
     for model in [Rating,Review,Watchlist,EditSuggestion,MovieSource,MovieEnrichmentField]:db.query(model).filter(model.movie_id==movie_id).delete(synchronize_session=False)
+    # Language/country associations have ORM delete-orphan cascades. Explicitly
+    # remove the remaining extension rows even in SQLite without FK enforcement.
+    for model in MOVIE_EXTENSION_MODELS[2:]: db.query(model).filter(model.movie_id==movie_id).delete(synchronize_session=False)
     db.delete(m);db.commit();return Response(status_code=204)
 
 @app.put('/api/movies/{movie_id}/rating')
@@ -313,7 +338,7 @@ class PersonInput(BaseModel):
 class CreditInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
     person_id: int = Field(gt=0)
-    role: Literal['actor', 'director', 'writer', 'producer']
+    role: CreditRole
     character: str = Field(default='', max_length=240)
 
 def person_out(person):
@@ -385,3 +410,36 @@ def delete_credit(movie_id: int, credit_id: int, db: Session = Depends(get_db), 
         raise HTTPException(404, 'Credit not found')
     db.delete(credit); db.commit()
     return Response(status_code=204)
+
+
+@app.get('/api/movies/{movie_id}/metadata')
+def movie_metadata(movie_id:int,db:Session=Depends(get_db)):
+    return movie_metadata_out(db,must_movie(db,movie_id))
+
+@app.patch('/api/movies/{movie_id}/metadata')
+def update_movie_metadata(movie_id:int,payload:MovieMetadataPatch,db:Session=Depends(get_db),user:User=Depends(require_role('admin'))):
+    m=must_movie(db,movie_id)
+    try:
+        apply_movie_metadata(db,m,payload)
+        record_overrides(db,MovieMetadataOverride,'movie_id',m.id,payload.model_fields_set)
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback();raise HTTPException(409,'Catalog changed; reload and retry') from exc
+    return movie_metadata_out(db,m)
+
+@app.get('/api/persons/{person_id}/metadata')
+def person_metadata(person_id:int,db:Session=Depends(get_db)):
+    return person_metadata_out(db,must_person(db,person_id))
+
+@app.patch('/api/persons/{person_id}/metadata')
+def update_person_metadata(person_id:int,payload:PersonMetadataPatch,db:Session=Depends(get_db),user:User=Depends(require_role('admin'))):
+    p=must_person(db,person_id)
+    try:
+        apply_person_metadata(db,p,payload)
+        record_overrides(db,PersonMetadataOverride,'person_id',p.id,payload.model_fields_set)
+        db.commit()
+    except ValueError as exc:
+        db.rollback();raise HTTPException(422,str(exc)) from exc
+    except IntegrityError as exc:
+        db.rollback();raise HTTPException(409,'Catalog changed; reload and retry') from exc
+    return person_metadata_out(db,p)

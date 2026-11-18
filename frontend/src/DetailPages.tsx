@@ -37,7 +37,7 @@ export function MoviePage({id,request,navigate,back,user,saved,watchState,onSign
   return <article className="movie-page main-content">
     <Back back={back}/>
     <section className="movie-feature" aria-labelledby="film-heading"><div className="feature-poster"><Poster title={m.title} src={m.poster_url} id={m.id} eager/></div><div className="feature-content">
-      <span className="overline">FILM / {m.year}</span><h1 id="film-heading">{m.title}</h1><div className="feature-facts"><span>{m.year}</span>{m.runtime&&<span><Clock size={16}/>{m.runtime} min</span>}{m.language&&<span>{m.language}</span>}{m.country&&<span>{m.country}</span>}</div>
+      <span className="overline">FILM / {m.year}</span><h1 id="film-heading">{m.title}</h1><div className="feature-facts"><span>{m.year}</span>{m.runtime&&<span><Clock size={16}/>{m.runtime} min</span>}{(m.original_language||m.language)&&<span>{m.original_language||m.language}</span>}{(m.production_countries?.length?m.production_countries:[m.country].filter(Boolean)).map(country=><span key={country}>{country}</span>)}</div>
       <div className="genre-tags">{m.genres.map(g=><span key={g}>{g}</span>)}</div>
       <div className="feature-rating"><Star size={24} fill="currentColor"/><strong>{m.average_rating??'Unrated'}{m.average_rating!==null&&<small> / 10</small>}</strong><span>{m.rating_count} {m.rating_count===1?'community rating':'community ratings'}</span></div>
       <h2 className="synopsis-heading">Synopsis</h2><p className="synopsis">{m.synopsis||'No synopsis is available yet.'}</p>
