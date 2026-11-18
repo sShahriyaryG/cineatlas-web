@@ -4,7 +4,7 @@ import {parseRoute,moviePath,personPath} from '../src/navigation.ts';
 import {groupFilmography} from '../src/catalogTypes.ts';
 
 test('canonical navigation routes and optional trailing slash',()=>{
-  for(const [path,kind] of [['/','discover'],['/discover','discover'],['/watchlist','watchlist'],['/for-you','recommended'],['/editor','editor'],['/admin','admin']]) assert.deepEqual(parseRoute(path),{kind});
+  for(const [path,kind] of [['/','home'],['/discover','discover'],['/watchlist','watchlist'],['/library','watchlist'],['/library/ratings','ratings'],['/for-you','recommended'],['/editor','editor'],['/admin','admin']]) assert.deepEqual(parseRoute(path),{kind});
   assert.deepEqual(parseRoute('/movies/42/'),{kind:'movie',id:42});
   assert.deepEqual(parseRoute(personPath(12)),{kind:'person',id:12});
   assert.deepEqual(parseRoute(moviePath(7)),{kind:'movie',id:7});

@@ -85,6 +85,8 @@ def main():
         headers = {'Authorization': 'Bearer ' + result['token']}
         rated = checked_json(client.put(f'/api/movies/{movie_id}/rating', json={'score': 9}, headers=headers))
         assert rated['average_rating'] == 9 and rated['rating_count'] == 1
+        personal = checked_json(client.get('/api/me/ratings', headers=headers))
+        assert [(m['id'],m['my_score']) for m in personal] == [(movie_id,9)]
         assert checked_json(client.get('/api/movies', params={'rating_min': 8}))['total'] == 1
         checked_json(client.put(f'/api/me/watchlist/{movie_id}', headers=headers))
         assert len(checked_json(client.get('/api/me/watchlist', headers=headers))) == 1
