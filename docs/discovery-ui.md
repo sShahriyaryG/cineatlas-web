@@ -6,10 +6,12 @@ CineAtlas uses the browser History API with ordinary anchor links and client-sid
 
 | Path | View |
 | --- | --- |
-| `/` or `/discover` | Discovery, search and filters |
+| `/` | Signed-in dashboard or guest discovery |
+| `/discover` | Dedicated film index, search and filters |
 | `/movies/:id` | Movie details, cast/crew, ratings, watchlist and reviews |
 | `/people/:id` | Person details and catalog filmography |
-| `/watchlist` | Personal saved films (sign-in required for data) |
+| `/library` or `/watchlist` | Personal saved films (sign-in required for data) |
+| `/library/ratings` | Personal rated films and scores (sign-in required for data) |
 | `/for-you` | Recommendations (sign-in required for data) |
 | `/editor` | Editor Workspace (editor/admin) |
 | `/admin` | Admin Studio (admin) |
@@ -20,7 +22,7 @@ Search, filter expansion and pagination state survive navigation within the same
 
 ## Data and interface
 
-Discovery includes up to three recent catalog picks, preferring entries with poster URLs among the newest twelve films. This is not an external popularity ranking. Posters use a consistent 2:3 aspect ratio, with a local initial fallback if an image is missing or fails. Movie details load by ID independently of the previous search results. Rating controls require explicit submission; community review publishing, spoiler disclosure, reporting and watchlist operations retain their existing API endpoints.
+Guest home includes up to three recent catalog picks, preferring entries with poster URLs among the newest twelve films. This is not an external popularity ranking. Posters use a consistent 2:3 aspect ratio, with a local initial fallback if an image is missing or fails. Movie details load by ID independently of the previous search results. Rating controls require explicit submission; community review publishing, spoiler disclosure, reporting and watchlist operations retain their existing API endpoints.
 
 Person profiles use existing `persons` and `movie_credits` data. The public `GET /api/persons/{id}` response adds `poster_url` to each credit, without removing existing fields. Filmography entries group credits by movie ID, retain all roles/characters, and preserve the backend's newest-year-first ordering. A person may have no biography or film credits. There are no new external person images, generated biographies, or requests to the TMDB API. Filmographies represent the local catalog and are not exhaustive career histories.
 
@@ -45,3 +47,5 @@ Manual verification: open Discovery, search and paginate, open a movie, refresh 
 ## Known limitations
 
 This iteration does not ingest profile photos/biographies, expose a people directory, add URL-based filter state, add frontend dependencies or introduce server rendering. Filmography API results are not paginated; review and cast lists retain their prior backend limits. Person and movie identifiers are local rather than globally stable. Browser visual and accessibility checks remain necessary.
+
+See [Application shell](application-shell.md) for current navigation and library behavior.

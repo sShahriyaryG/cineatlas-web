@@ -1,4 +1,5 @@
 export type Movie={id:number;title:string;year:number;genres:string[];synopsis:string;poster_url:string;runtime:number|null;language:string;country:string;average_rating:number|null;rating_count:number};
+export type RatedMovie=Movie & {my_score:number};
 export type User={id:number;username:string;role:string;bio:string};
 export type Review={id:number;username:string;title:string;body:string;spoiler:boolean;created_at:string};
 export type Api=(path:string,options?:RequestInit)=>Promise<any>;

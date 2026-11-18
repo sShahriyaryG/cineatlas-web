@@ -35,13 +35,13 @@ export function useNavigation(scope:string,signal:AbortSignal){
     if(signal.aborted)return;
     if(backAction(active.current.entry)==='back'){window.history.back();return;}
     // A direct link has no known in-app predecessor. Never send the user off-site.
-    if(active.current.path==='/')return;
+    if(active.current.path==='/discover')return;
     const entry=newHistoryEntry(scope);
-    window.history.replaceState(historyState(entry),'','/');
-    commit({path:'/',entry,restore:false});
+    window.history.replaceState(historyState(entry),'','/discover');
+    commit({path:'/discover',entry,restore:false});
   },[scope,signal,commit]);
   useLayoutEffect(()=>{
-    const titles:Record<string,string>={discover:'Discover',watchlist:'My watchlist',recommended:'For you',admin:'Admin Studio',editor:'Editor Workspace',movie:'Movie',person:'Person','not-found':'Page not found'};
+    const titles:Record<string,string>={home:'Home',discover:'Explore',watchlist:'My Library',ratings:'My ratings',recommended:'For you',admin:'Admin Studio',editor:'Editor Workspace',movie:'Movie',person:'Person','not-found':'Page not found'};
     document.title=`${titles[parseRoute(location.path).kind]} — CineAtlas`;
     if(rendered.current===location.entry.key)return;
     rendered.current=location.entry.key;

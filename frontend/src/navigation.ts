@@ -1,9 +1,11 @@
-export type Route = {kind:'discover'|'watchlist'|'recommended'|'editor'|'admin'|'not-found'} | {kind:'movie'|'person';id:number};
+export type Route = {kind:'home'|'discover'|'watchlist'|'ratings'|'recommended'|'editor'|'admin'|'not-found'} | {kind:'movie'|'person';id:number};
 export function parseRoute(path:string):Route {
   const clean=path.replace(/\/+$/,'')||'/';
   switch(clean){
-    case '/': case '/discover': return {kind:'discover'};
-    case '/watchlist': return {kind:'watchlist'};
+    case '/': return {kind:'home'};
+    case '/discover': return {kind:'discover'};
+    case '/watchlist': case '/library': return {kind:'watchlist'};
+    case '/library/ratings': return {kind:'ratings'};
     case '/for-you': return {kind:'recommended'};
     case '/editor': return {kind:'editor'};
     case '/admin': return {kind:'admin'};

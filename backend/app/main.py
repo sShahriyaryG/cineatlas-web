@@ -232,6 +232,17 @@ def del_watchlist(movie_id:int,user:User=Depends(current_user),db:Session=Depend
     w=db.scalar(select(Watchlist).where(Watchlist.user_id==user.id,Watchlist.movie_id==movie_id))
     if w:db.delete(w);db.commit()
     return {'saved':False}
+@app.get('/api/me/ratings')
+def my_ratings(user:User=Depends(current_user),db:Session=Depends(get_db)):
+    # Aggregate community scores once, without exposing another member's personal rating.
+    summaries=(select(Rating.movie_id.label('movie_id'),func.avg(Rating.score).label('average'),
+                      func.count(Rating.id).label('count')).group_by(Rating.movie_id).subquery())
+    rows=db.execute(select(Movie,Rating.score,summaries.c.average,summaries.c.count)
+        .join(Rating,Rating.movie_id==Movie.id)
+        .join(summaries,summaries.c.movie_id==Movie.id)
+        .where(Rating.user_id==user.id).order_by(Movie.title.asc(),Movie.id.asc())).all()
+    return [{**movie_out(db,m,(average,count)), 'my_score':score} for m,score,average,count in rows]
+
 @app.get('/api/me/recommendations')
 def recommendations(user:User=Depends(current_user),db:Session=Depends(get_db)):
     ratings=db.execute(select(Rating,Movie).join(Movie,Movie.id==Rating.movie_id).where(Rating.user_id==user.id)).all()
