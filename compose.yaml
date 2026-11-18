@@ -16,6 +16,8 @@ services:
     build: ./backend
     environment:
       DATABASE_URL: postgresql+psycopg://cineatlas:${DB_PASSWORD:-local-dev-only}@db:5432/cineatlas
+      CINEATLAS_COOKIE_SECURE: ${CINEATLAS_COOKIE_SECURE:-false}
+      CINEATLAS_WEB_ORIGINS: ${CINEATLAS_WEB_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
     ports:
       - "8000:8000"
     depends_on:

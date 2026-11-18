@@ -88,6 +88,11 @@ def main():
         assert checked_json(client.get('/api/movies', params={'rating_min': 8}))['total'] == 1
         checked_json(client.put(f'/api/me/watchlist/{movie_id}', headers=headers))
         assert len(checked_json(client.get('/api/me/watchlist', headers=headers))) == 1
+        sessions = checked_json(client.get('/api/auth/sessions', headers=headers))
+        assert len(sessions) == 1 and sessions[0]['current'] is True
+        assert client.post('/api/auth/logout', headers=headers).status_code == 204
+        assert client.get('/api/auth/me', headers=headers).status_code == 401
+    print('PASS: durable session creation and revocation.', flush=True)
     print('PASS: legacy genre backfill, title/synopsis/director search, filmography, auth, rating and watchlist.', flush=True)
     engine.dispose()
 
