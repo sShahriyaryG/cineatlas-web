@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .ingestion import QID, clean
-from .models import Movie, MovieSource, Person, PersonSource, MovieCredit, MovieEnrichmentField
+from .models import Movie, MovieSource, Person, PersonSource, MovieCredit, MovieEnrichmentField, MovieMetadataOverride
 
 IMDB = re.compile(r'tt[0-9]{7,12}\Z')
 IMAGE_PATH = re.compile(r'/[A-Za-z0-9_-]+\.(?:jpg|jpeg|png|webp)\Z', re.I)
@@ -22,6 +22,9 @@ ROLES = {'Director': 'director', 'Writer': 'writer', 'Screenplay': 'writer',
 
 class ProviderError(Exception):
     """Safe diagnostic without credentials or raw response body."""
+    def __init__(self, message, *, status_code=None):
+        super().__init__(message)
+        self.status_code = status_code
 
 
 class TMDBClient:
@@ -39,7 +42,7 @@ class TMDBClient:
     def __exit__(self, *args):
         self.client.close()
 
-    def get(self, path, **params):
+    def get(self, path, *, response_list=False, **params):
         for attempt in range(3):
             try:
                 response = self.client.get(path, params=params)
@@ -55,11 +58,15 @@ class TMDBClient:
                 time.sleep(max(1, int(retry)) if retry.isdigit() else 2 ** attempt)
                 continue
             if response.status_code != 200:
-                raise ProviderError(f'TMDB HTTP {response.status_code}; check access or try later')
+                raise ProviderError(f'TMDB HTTP {response.status_code}; check access or try later', status_code=response.status_code)
             try:
                 result = response.json()
             except ValueError:
                 raise ProviderError('TMDB returned invalid JSON') from None
+            if response_list:
+                if not isinstance(result, list):
+                    raise ProviderError('TMDB returned an invalid response list')
+                return result
             if not isinstance(result, dict) or result.get('success') is False:
                 raise ProviderError('TMDB returned an invalid response object')
             return result
@@ -173,7 +180,7 @@ def record_field(db, movie, name, external):
         db.flush()
 
 
-def apply_details(db, movie, details, provider, report, cast_limit):
+def apply_details(db, movie, details, provider, report, cast_limit, *, roles=ROLES):
     external = str(details['id'])
     overview = valid_text(details.get('overview'), 10000)
     path = details.get('poster_path')
@@ -181,7 +188,8 @@ def apply_details(db, movie, details, provider, report, cast_limit):
     runtime = details.get('runtime')
     for name, value in [('synopsis', overview), ('poster_url', poster),
                         ('runtime', runtime if type(runtime) is int and 1 <= runtime <= 10000 else None)]:
-        if value and not getattr(movie, name) and not db.get(MovieEnrichmentField, (movie.id, name, 'tmdb')):
+        if (value and not getattr(movie, name) and not db.get(MovieEnrichmentField, (movie.id, name, 'tmdb'))
+                and not db.get(MovieMetadataOverride, (movie.id, name))):
             setattr(movie, name, value)
             record_field(db, movie, name, external)
             report.fields_filled += 1
@@ -190,13 +198,14 @@ def apply_details(db, movie, details, provider, report, cast_limit):
         raise ProviderError('TMDB movie details missing valid credits')
     occupied = set(db.scalars(select(MovieCredit.role).where(MovieCredit.movie_id == movie.id)))
     entries = [('actor', x) for x in credits['cast'][:cast_limit] if isinstance(x, dict)]
-    entries += [(ROLES[x['job']], x) for x in credits['crew'] if isinstance(x, dict) and isinstance(x.get('job'), str) and x['job'] in ROLES]
+    entries += [(roles[x['job']], x) for x in credits['crew'] if isinstance(x, dict) and isinstance(x.get('job'), str) and x['job'] in roles]
     seen = set()
     for role, entry in entries:
         if role in occupied:
             continue
         # If a previously imported role was later removed, do not restore it automatically.
-        if db.get(MovieEnrichmentField, (movie.id, 'credits_' + role, 'tmdb')):
+        if (db.get(MovieEnrichmentField, (movie.id, 'credits_' + role, 'tmdb'))
+                or db.get(MovieMetadataOverride, (movie.id, 'credits_' + role))):
             continue
         person_id = person_for(db, entry, report)
         if person_id is None:

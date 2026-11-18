@@ -1,5 +1,7 @@
 # Movie metadata enrichment
 
+For expanded metadata on already-linked movies and their credited people, see [Metadata enrichment 2.0](catalog-enrichment-v2.md). The commands below describe the original linking pipeline.
+
 The optional TMDB integration complements the CC0 Wikidata ingestion pipeline with movie synopses, poster URLs, missing runtimes, and cast/crew. It uses the official API, not IMDb scraping, and does not include bundled TMDB movie data or credentials.
 
 ## Before using the integration

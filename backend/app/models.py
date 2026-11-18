@@ -307,3 +307,13 @@ class PersonMetadataOverride(Base):
     person_id: Mapped[int] = mapped_column(ForeignKey('persons.id', ondelete='CASCADE'), primary_key=True)
     field: Mapped[str] = mapped_column(String(32), primary_key=True)
     edited_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class PersonEnrichmentField(Base):
+    """Original import history; does not attest to subsequent manual edits."""
+    __tablename__ = 'person_enrichment_fields'
+    person_id: Mapped[int] = mapped_column(ForeignKey('persons.id', ondelete='CASCADE'), primary_key=True)
+    field: Mapped[str] = mapped_column(String(32), primary_key=True)
+    source: Mapped[str] = mapped_column(String(32), primary_key=True)
+    external_id: Mapped[str] = mapped_column(String(64))
+    imported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
