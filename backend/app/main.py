@@ -20,7 +20,7 @@ from .security import (hash_password, verify_password, current_user, require_rol
 async def lifespan(app):
     Base.metadata.create_all(bind=engine) # development convenience; deploy with migrations
     yield
-app=FastAPI(title='CineAtlas API',version='0.4.0',lifespan=lifespan)
+app=FastAPI(title='CineAtlas API',version='0.5.0',lifespan=lifespan)
 app.add_middleware(CORSMiddleware,allow_origins=list(WEB_ORIGINS),allow_credentials=True,allow_methods=['GET','POST','PUT','DELETE','PATCH'],allow_headers=['Authorization','Content-Type','X-Auth-Transport','X-Session-ID'])
 
 @app.middleware('http')

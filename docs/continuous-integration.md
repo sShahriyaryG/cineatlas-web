@@ -4,11 +4,11 @@ CineAtlas uses `.github/workflows/ci.yml` to check changes on GitHub-hosted Linu
 
 ## Jobs
 
-| Check | Environment | Purpose |
-| --- | --- | --- |
-| Backend tests | Python 3.12, isolated SQLite | Run all pytest regression tests, including mocked ingestion and enrichment requests. |
-| Frontend tests and build | Node.js 22 | Run the Node logic tests, TypeScript compilation, and Vite production build. |
-| PostgreSQL migrations and API smoke test | Python 3.12, PostgreSQL 17 | Run the real migration chain on a fresh service database; check schema, backfill, and API behavior. |
+| Check                                    | Environment                  | Purpose                                                                                             |
+| ---------------------------------------- | ---------------------------- | --------------------------------------------------------------------------------------------------- |
+| Backend tests                            | Python 3.12, isolated SQLite | Run all pytest regression tests, including mocked ingestion and enrichment requests.                |
+| Frontend tests and build                 | Node.js 22                   | Run the Node logic tests, TypeScript compilation, and Vite production build.                        |
+| PostgreSQL migrations and API smoke test | Python 3.12, PostgreSQL 17   | Run the real migration chain on a fresh service database; check schema, backfill, and API behavior. |
 
 The pytest fixture explicitly selects SQLite. The PostgreSQL job therefore uses the separate `backend/ci/database_smoke.py` module instead of assuming pytest will use the service database.
 
@@ -24,7 +24,7 @@ From the project root with Docker running:
 
 ```powershell
 docker compose exec api python -m pytest -q
-docker compose exec web node --experimental-strip-types --test tests/discovery.test.mjs
+docker compose exec web node --experimental-strip-types --test tests/*.test.mjs
 docker compose exec web npm run build
 ```
 
