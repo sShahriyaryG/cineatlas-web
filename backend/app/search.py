@@ -2,11 +2,11 @@
 from typing import Literal
 from sqlalchemy import and_, case, func, or_, select
 from .catalog import genre_key
-from .models import Genre, Movie, MovieCredit, Person, Rating
+from .models import Genre, Movie, MovieCredit, Person, Rating, MovieMetadata, MovieAlternativeTitle, PersonAlternativeName, MovieCertification
 from .directory import CLASSIFICATIONS
 
 SearchMode = Literal['title', 'synopsis', 'actor', 'director', 'all']
-SortMode = Literal['relevance', 'title', 'newest', 'oldest', 'rating', 'most_rated']
+SortMode = Literal['relevance', 'title', 'newest', 'oldest', 'rating', 'most_rated', 'title_desc']
 GenreMode = Literal['and', 'or']
 
 
@@ -15,13 +15,22 @@ def escape_like(text: str) -> str:
     return text.replace('!', '!!').replace('%', '!%').replace('_', '!_')
 
 
+def title_match(pattern):
+    return or_(Movie.title.ilike(pattern, escape='!'),
+        select(MovieMetadata.movie_id).where(MovieMetadata.movie_id == Movie.id,
+            MovieMetadata.original_title.ilike(pattern, escape='!')).exists(),
+        select(MovieAlternativeTitle.movie_id).where(MovieAlternativeTitle.movie_id == Movie.id,
+            MovieAlternativeTitle.title.ilike(pattern, escape='!')).exists())
+
+
 def person_match(pattern, roles):
     return Movie.credits.any(and_(MovieCredit.role.in_(roles),
-                                  MovieCredit.person.has(Person.name.ilike(pattern, escape='!'))))
+                                  MovieCredit.person.has(or_(Person.name.ilike(pattern, escape='!'),
+                                      select(PersonAlternativeName.person_id).where(PersonAlternativeName.person_id == Person.id, PersonAlternativeName.name.ilike(pattern, escape='!')).exists()))))
 
 
 def catalog_page(db, *, q, mode, genres, genre_mode, year, year_min, year_max,
-                 rating_min, rating_max, sort, page, size, classifications=None, scope=None):
+                 rating_min, rating_max, sort, page, size, classifications=None, scope=None, exclusions=None, credits=None, credit_mode="and", excluded_credits=None, runtime_min=None, runtime_max=None, certification_country=None, certification_rating=None):
     """Return matching movies and aggregate ratings with deterministic pagination."""
     ratings = select(Rating.movie_id.label('mid'), func.avg(Rating.score).label('avg'),
                      func.count(Rating.id).label('n')).group_by(Rating.movie_id).subquery()
@@ -31,12 +40,12 @@ def catalog_page(db, *, q, mode, genres, genre_mode, year, year_min, year_max,
     terms = q.split()
     for term in terms:
         pattern = '%' + escape_like(term) + '%'
-        title = Movie.title.ilike(pattern, escape='!')
+        title = title_match(pattern)
         synopsis = Movie.synopsis.ilike(pattern, escape='!')
         if mode == 'title': condition = title
         elif mode == 'synopsis': condition = synopsis
         elif mode in ('actor', 'director'): condition = person_match(pattern, [mode])
-        else: condition = or_(title, synopsis, person_match(pattern, ['actor', 'director']))
+        else: condition = or_(title, synopsis, person_match(pattern, ['actor', 'director', 'writer', 'producer', 'composer', 'cinematographer', 'editor', 'other']))
         stmt = stmt.where(condition)
     keys = sorted({genre_key(g) for g in genres if g.strip()})
     if keys:
@@ -60,6 +69,28 @@ def catalog_page(db, *, q, mode, genres, genre_mode, year, year_min, year_max,
         else:
             for ident in ids:
                 stmt = stmt.where(select(link.movie_id).where(link.movie_id == Movie.id, fk == ident).exists())
+    for category, ids in (exclusions or {}).items():
+        if ids:
+            _, link, fk = CLASSIFICATIONS[category]
+            stmt = stmt.where(~select(link.movie_id).where(link.movie_id == Movie.id, fk.in_(ids)).exists())
+    def credit_match(pair):
+        ident, role = pair
+        condition = MovieCredit.person_id == ident
+        if role != 'any':
+            condition = and_(condition, MovieCredit.role == role)
+        return Movie.credits.any(condition)
+    if credits:
+        conditions = [credit_match(pair) for pair in set(credits)]
+        stmt = stmt.where(or_(*conditions) if credit_mode == 'or' else and_(*conditions))
+    for pair in set(excluded_credits or []):
+        stmt = stmt.where(~credit_match(pair))
+    if runtime_min is not None: stmt = stmt.where(Movie.runtime >= runtime_min)
+    if runtime_max is not None: stmt = stmt.where(Movie.runtime <= runtime_max)
+    if certification_country is not None:
+        cert = select(MovieCertification.movie_id).where(MovieCertification.movie_id == Movie.id,
+                                                         MovieCertification.country_id == certification_country)
+        if certification_rating is not None: cert = cert.where(MovieCertification.rating == certification_rating)
+        stmt = stmt.where(cert.exists())
     if year is not None: stmt = stmt.where(Movie.year == year)
     if year_min is not None: stmt = stmt.where(Movie.year >= year_min)
     if year_max is not None: stmt = stmt.where(Movie.year <= year_max)
@@ -67,6 +98,7 @@ def catalog_page(db, *, q, mode, genres, genre_mode, year, year_min, year_max,
     if rating_max is not None: stmt = stmt.where(ratings.c.avg <= rating_max)
     total = db.scalar(select(func.count()).select_from(stmt.subquery()))
     if sort == 'newest': stmt = stmt.order_by(Movie.year.desc())
+    elif sort == 'title_desc': stmt = stmt.order_by(func.lower(Movie.title).desc())
     elif sort == 'oldest': stmt = stmt.order_by(Movie.year)
     elif sort == 'rating': stmt = stmt.order_by(case((ratings.c.avg.is_(None), 1), else_=0), ratings.c.avg.desc(), count.desc())
     elif sort == 'most_rated': stmt = stmt.order_by(count.desc())
@@ -75,10 +107,10 @@ def catalog_page(db, *, q, mode, genres, genre_mode, year, year_min, year_max,
         # Title modes weight exact, prefix, phrase and token-only matches;
         # other scopes weight contiguous phrase matches within their own fields.
         if mode in ('title', 'all'):
-            rank = case((Movie.title.ilike(phrase, escape='!'), 0),
-                        (Movie.title.ilike(phrase+'%', escape='!'), 1),
-                        (Movie.title.ilike('%'+phrase+'%', escape='!'), 2),
-                        (and_(*(Movie.title.ilike('%'+escape_like(t)+'%', escape='!') for t in terms)), 3),
+            rank = case((title_match(phrase), 0),
+                        (title_match(phrase+'%'), 1),
+                        (title_match('%'+phrase+'%'), 2),
+                        (and_(*(title_match('%'+escape_like(t)+'%') for t in terms)), 3),
                         else_=4)
         elif mode == 'synopsis':
             rank = case((Movie.synopsis.ilike('%'+phrase+'%', escape='!'), 0), else_=1)

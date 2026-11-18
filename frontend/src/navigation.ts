@@ -1,10 +1,11 @@
 export type Category = 'genres'|'countries'|'languages'|'tags';
 export type Directory = Category|'people';
-export type Route = {kind:'home'|'discover'|'watchlist'|'ratings'|'recommended'|'editor'|'admin'|'not-found'} | {kind:'movie'|'person';id:number} | {kind:'directory';category:Directory} | {kind:'classification';category:Category;id:number};
+export type Route = {kind:'home'|'discover'|'search'|'watchlist'|'ratings'|'recommended'|'editor'|'admin'|'not-found'} | {kind:'movie'|'person';id:number} | {kind:'directory';category:Directory} | {kind:'classification';category:Category;id:number};
 export function parseRoute(path:string):Route {
   const clean=path.replace(/\/+$/,'')||'/';
   switch(clean){
     case '/': return {kind:'home'};
+    case '/search': return {kind:'search'};
     case '/discover': return {kind:'discover'};
     case '/watchlist': case '/library': return {kind:'watchlist'};
     case '/library/ratings': return {kind:'ratings'};

@@ -136,6 +136,17 @@ def main():
         scoped=f'/api/directory/classifications/languages/{english["id"]}'
         assert checked_json(client.get(scoped,params=params))['total']==1
         assert checked_json(client.get(scoped,params={'q':'not a matching title'}))['total']==0
+        genre_id=metadata['classifications']['genres'][0]['id']
+        combined={'genre_ids':[genre_id],'credit':[f'{person_id}:composer'],'runtime_min':1, 'exclude_tag_ids':[tag]}
+        assert checked_json(client.get(scoped,params=combined))['total']==0
+        # Certification matching must use the same country and rating row.
+        certs=checked_json(client.get('/api/directory/certification-options'))
+        canada=next(x['country_id'] for x in certs if x['country']=='Canada' and x['rating']=='PG')
+        assert checked_json(client.get(scoped,params={'credit':[f'{person_id}:director'],'certification_country':canada,'certification_rating':'PG'}))['total']==1
+        assert checked_json(client.get(scoped,params={'exclude_credit':[f'{person_id}:composer']}))['total']==0
+        assert checked_json(client.get('/api/directory/people',params={'sort':'count_desc','role':'director'}))['items'][0]['id']==person_id
+        assert checked_json(client.get('/api/search',params={'q':'CI Legacy Film'}))['films']['items'][0]['id']==movie_id
+        assert checked_json(client.get('/api/search',params={'q':'Example Director'}))['people']['items'][0]['id']==person_id
         assert film_page['total'] == 1 and film_page['items'][0]['id'] == movie_id
         assert film_page['items'][0]['average_rating'] == 9
         assert client.post('/api/auth/logout', headers=headers).status_code == 204

@@ -1,6 +1,6 @@
 """Read-only archive directories. Counts refer to distinct local films."""
 from typing import Literal
-from sqlalchemy import select, func, or_
+from sqlalchemy import select, func, or_, case
 from .models import (Movie, Person, PersonMetadata, PersonAlternativeName, MovieCredit,
                      Genre, MovieGenre, Language, MovieLanguage, Country, MovieCountry, Tag, MovieTag)
 
@@ -13,19 +13,31 @@ CLASSIFICATIONS = {
 }
 
 
-def people_page(db, q, role, page, size):
+def directory_order(name, count, q, sort):
+    if sort == 'name_desc': return [func.lower(name).desc()]
+    if sort == 'count_desc': return [count.desc(), func.lower(name)]
+    if sort == 'count_asc': return [count, func.lower(name)]
+    if sort == 'relevance' and q:
+        return [case((func.lower(name)==q.lower(),0),(name.istartswith(q,autoescape=True),1),else_=2),func.lower(name)]
+    return [func.lower(name)]
+
+
+def people_page(db, q, role, page, size, sort='name'):
+    q=' '.join(q.split())
     stmt = select(Person.id, Person.name, PersonMetadata.profile_url).outerjoin(
         PersonMetadata, PersonMetadata.person_id == Person.id)
-    if q:
-        stmt = stmt.where(or_(Person.name.icontains(q, autoescape=True),
+    for term in q.split():
+        stmt = stmt.where(or_(Person.name.icontains(term, autoescape=True),
+            PersonMetadata.full_name.icontains(term, autoescape=True),
             select(PersonAlternativeName.person_id).where(
                 PersonAlternativeName.person_id == Person.id,
-                PersonAlternativeName.name.icontains(q, autoescape=True)).exists()))
+                PersonAlternativeName.name.icontains(term, autoescape=True)).exists()))
     if role:
         stmt = stmt.where(select(MovieCredit.id).where(MovieCredit.person_id == Person.id,
                                                        MovieCredit.role == role).exists())
     total = db.scalar(select(func.count()).select_from(stmt.subquery()))
-    rows = db.execute(stmt.order_by(func.lower(Person.name), Person.id).offset((page-1)*size).limit(size)).all()
+    film_count = select(func.count(func.distinct(MovieCredit.movie_id))).where(MovieCredit.person_id == Person.id).correlate(Person).scalar_subquery()
+    rows = db.execute(stmt.order_by(*directory_order(Person.name,film_count,q,sort), Person.id).offset((page-1)*size).limit(size)).all()
     ids = [r.id for r in rows]
     roles = {pid: [] for pid in ids}
     counts = {}
@@ -40,7 +52,8 @@ def people_page(db, q, role, page, size):
             'total': total, 'page': page, 'size': size}
 
 
-def classification_page(db, category, q, page, size):
+def classification_page(db, category, q, page, size, sort='name'):
+    q=' '.join(q.split())
     model, link, fk = CLASSIFICATIONS[category]
     counts = select(fk.label('cid'), func.count(func.distinct(link.movie_id)).label('n')).group_by(fk).subquery()
     # Only classifications attached to films appear in browse results. Direct links
@@ -49,7 +62,7 @@ def classification_page(db, category, q, page, size):
     if q:
         stmt = stmt.where(model.name.icontains(q, autoescape=True))
     total = db.scalar(select(func.count()).select_from(stmt.subquery()))
-    rows = db.execute(stmt.order_by(func.lower(model.name), model.id).offset((page-1)*size).limit(size))
+    rows = db.execute(stmt.order_by(*directory_order(model.name,counts.c.n,q,sort), model.id).offset((page-1)*size).limit(size))
     return {'items': [dict(id=i, name=n, film_count=c) for i, n, c in rows],
             'total': total, 'page': page, 'size': size}
 
