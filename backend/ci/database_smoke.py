@@ -120,6 +120,24 @@ def main():
         assert person_meta['birthday']=='1980-01-01' and person_meta['nationalities']==['Canada']
         checked_json(client.post(f'/api/movies/{movie_id}/credits',headers=headers,json={'person_id':person_id,'role':'composer'}),201)
         assert {c['role'] for c in checked_json(client.get(f'/api/persons/{person_id}'))['credits']}=={'director','composer'}
+        directory = checked_json(client.get('/api/directory/people',params={'role':'composer'}))
+        assert directory['items'][0]['id'] == person_id and directory['items'][0]['film_count'] == 1
+        assert set(directory['items'][0]['roles']) == {'director','composer'}
+        metadata = checked_json(client.get(metadata_path))
+        english = next(x for x in metadata['classifications']['languages'] if x['kind']=='original')
+        language_page = checked_json(client.get('/api/directory/classifications/languages',params={'q':'English'}))
+        assert language_page['items'][0]['film_count'] == 1  # original + spoken is not two films
+        film_page = checked_json(client.get(f'/api/directory/classifications/languages/{english["id"]}'))
+        options=checked_json(client.get('/api/directory/filter-options'))
+        country=next(x['id'] for x in options['countries'] if x['name']=='France')
+        tag=next(x['id'] for x in options['tags'] if x['name']=='Fixture')
+        params={'q':'Legacy Film','country_ids':[country],'tag_ids':[tag],'language_ids':[english['id']]}
+        assert checked_json(client.get('/api/movies',params=params))['total']==1
+        scoped=f'/api/directory/classifications/languages/{english["id"]}'
+        assert checked_json(client.get(scoped,params=params))['total']==1
+        assert checked_json(client.get(scoped,params={'q':'not a matching title'}))['total']==0
+        assert film_page['total'] == 1 and film_page['items'][0]['id'] == movie_id
+        assert film_page['items'][0]['average_rating'] == 9
         assert client.post('/api/auth/logout', headers=headers).status_code == 204
         assert client.get('/api/auth/me', headers=headers).status_code == 401
     # Exercise enrichment on the migrated database without HTTP or secrets.

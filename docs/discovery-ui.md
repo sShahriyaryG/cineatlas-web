@@ -49,3 +49,7 @@ Manual verification: open Discovery, search and paginate, open a movie, refresh 
 This iteration does not ingest profile photos/biographies, expose a people directory, add URL-based filter state, add frontend dependencies or introduce server rendering. Filmography API results are not paginated; review and cast lists retain their prior backend limits. Person and movie identifiers are local rather than globally stable. Browser visual and accessibility checks remain necessary.
 
 See [Application shell](application-shell.md) for current navigation and library behavior.
+
+## Expanded archive directories
+
+See [Dedicated discovery directories](discovery-directory.md) for the paginated people and classification routes and expanded detail pages.

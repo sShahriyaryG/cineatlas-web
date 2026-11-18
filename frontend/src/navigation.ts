@@ -1,4 +1,6 @@
-export type Route = {kind:'home'|'discover'|'watchlist'|'ratings'|'recommended'|'editor'|'admin'|'not-found'} | {kind:'movie'|'person';id:number};
+export type Category = 'genres'|'countries'|'languages'|'tags';
+export type Directory = Category|'people';
+export type Route = {kind:'home'|'discover'|'watchlist'|'ratings'|'recommended'|'editor'|'admin'|'not-found'} | {kind:'movie'|'person';id:number} | {kind:'directory';category:Directory} | {kind:'classification';category:Category;id:number};
 export function parseRoute(path:string):Route {
   const clean=path.replace(/\/+$/,'')||'/';
   switch(clean){
@@ -10,11 +12,17 @@ export function parseRoute(path:string):Route {
     case '/editor': return {kind:'editor'};
     case '/admin': return {kind:'admin'};
   }
+  const directory=/^\/discover\/(people|genres|countries|languages|tags)$/.exec(clean);
+  if(directory)return {kind:'directory',category:directory[1] as Directory};
+  const classification=/^\/discover\/(genres|countries|languages|tags)\/([1-9]\d*)$/.exec(clean);
+  if(classification){const id=Number(classification[2]);if(Number.isSafeInteger(id)&&id<=2147483647)return {kind:'classification',category:classification[1] as Category,id};}
   const match=/^\/(movies|people)\/([1-9]\d*)$/.exec(clean);
   if(match){const id=Number(match[2]);if(Number.isSafeInteger(id)&&id<=2147483647)return {kind:match[1]==='movies'?'movie':'person',id};}
   return {kind:'not-found'};
 }
 export const moviePath=(id:number)=>`/movies/${id}`;
+export const directoryPath=(category:Directory)=>`/discover/${category}`;
+export const classificationPath=(category:Category,id:number)=>`/discover/${category}/${id}`;
 export const personPath=(id:number)=>`/people/${id}`;
 
 // History entries belong to one in-memory application/session boundary.

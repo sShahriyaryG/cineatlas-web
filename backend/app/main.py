@@ -14,6 +14,8 @@ from .catalog import set_movie_genres, parse_genres
 from .metadata import (MovieMetadataPatch, PersonMetadataPatch, CreditRole, movie_summary,
     movie_metadata_out, person_metadata_out, apply_movie_metadata, apply_person_metadata,
     sync_legacy_labels, check_legacy_update, MOVIE_EXTENSION_MODELS, record_overrides)
+from .directory import Category, people_page, classification_page, filter_options, CLASSIFICATIONS, movie_classifications
+from .models import PersonMetadata
 from .search import catalog_page, SearchMode, SortMode, GenreMode
 from .security import (hash_password, verify_password, current_user, require_role, authenticate,
     issue_session, transport_for, quota, event, active_sessions, revoke_all, now, aware,
@@ -158,14 +160,16 @@ def change_password(payload:PasswordChange,request:Request,auth=Depends(authenti
 def update_profile(payload:ProfileInput,user:User=Depends(current_user),db:Session=Depends(get_db)):
     user.bio=payload.bio;db.commit();return safe_user(user)
 
-@app.get('/api/movies')
-def movies(q:str=Query('',max_length=200),mode:SearchMode='title',
+def film_search_options(q:str=Query('',max_length=200),mode:SearchMode='title',
            genre:str=Query('',max_length=512),genres:Annotated[list[str]|None,Query(max_length=20)]=None,
            genre_mode:GenreMode='and',year:int|None=Query(None,ge=1888,le=2200),
            year_min:int|None=Query(None,ge=1888,le=2200),year_max:int|None=Query(None,ge=1888,le=2200),
            rating_min:float|None=Query(None,ge=1,le=10),rating_max:float|None=Query(None,ge=1,le=10),
            sort:SortMode='relevance',page:int=Query(1,ge=1,le=100000),size:int=Query(12,ge=1,le=50),
-           db:Session=Depends(get_db)):
+           language_ids:Annotated[list[Annotated[int,Query(ge=1,le=2147483647)]]|None,Query(max_length=20)]=None,
+           country_ids:Annotated[list[Annotated[int,Query(ge=1,le=2147483647)]]|None,Query(max_length=20)]=None,
+           tag_ids:Annotated[list[Annotated[int,Query(ge=1,le=2147483647)]]|None,Query(max_length=20)]=None,
+           language_mode:GenreMode='and',country_mode:GenreMode='and',tag_mode:GenreMode='and'):
     labels=[genre,*(genres or [])]
     if any(len(g)>512 or '\x00' in g for g in labels) or '\x00' in q:
         raise HTTPException(422,'Invalid search text or genre label')
@@ -173,9 +177,19 @@ def movies(q:str=Query('',max_length=200),mode:SearchMode='title',
         raise HTTPException(422,'Minimum year must not exceed maximum year')
     if rating_min is not None and rating_max is not None and rating_min>rating_max:
         raise HTTPException(422,'Minimum rating must not exceed maximum rating')
-    items,total=catalog_page(db,q=q,mode=mode,genres=labels,genre_mode=genre_mode,year=year,
-        year_min=year_min,year_max=year_max,rating_min=rating_min,rating_max=rating_max,sort=sort,page=page,size=size)
-    return {'items':[movie_out(db,m,(avg,count)) for m,avg,count in items],'total':total,'page':page,'size':size}
+    return dict(q=q,mode=mode,genres=labels,genre_mode=genre_mode,year=year,
+        year_min=year_min,year_max=year_max,rating_min=rating_min,rating_max=rating_max,sort=sort,page=page,size=size,
+        classifications={'languages':(language_ids or [],language_mode),'countries':(country_ids or [],country_mode),'tags':(tag_ids or [],tag_mode)})
+
+
+def movie_search_result(db, options, scope=None):
+    items,total=catalog_page(db,**options,scope=scope)
+    return {'items':[movie_out(db,m,(avg,count)) for m,avg,count in items],'total':total,'page':options['page'],'size':options['size']}
+
+
+@app.get('/api/movies')
+def movies(options:dict=Depends(film_search_options),db:Session=Depends(get_db)):
+    return movie_search_result(db,options)
 @app.get('/api/genres')
 def genres(db:Session=Depends(get_db)):
     return list(db.scalars(select(Genre.name).join(MovieGenre).distinct().order_by(Genre.name)))
@@ -390,7 +404,10 @@ def update_person(person_id: int, payload: PersonInput, db: Session = Depends(ge
 @app.get('/api/movies/{movie_id}/credits')
 def movie_credits(movie_id: int, db: Session = Depends(get_db)):
     movie = must_movie(db, movie_id)
-    return [credit_out(c) for c in sorted(movie.credits, key=lambda c: (c.role, c.person.name.casefold(), c.id))]
+    credits = sorted(movie.credits, key=lambda c: (c.role, c.person.name.casefold(), c.id))
+    ids = {c.person_id for c in credits}
+    photos = dict(db.execute(select(PersonMetadata.person_id, PersonMetadata.profile_url).where(PersonMetadata.person_id.in_(ids))).all()) if ids else {}
+    return [{**credit_out(c), 'profile_url': photos.get(c.person_id)} for c in credits]
 
 @app.post('/api/movies/{movie_id}/credits', status_code=201)
 def create_credit(movie_id: int, payload: CreditInput, db: Session = Depends(get_db), user: User = Depends(require_role('admin'))):
@@ -420,7 +437,7 @@ def delete_credit(movie_id: int, credit_id: int, db: Session = Depends(get_db), 
 
 @app.get('/api/movies/{movie_id}/metadata')
 def movie_metadata(movie_id:int,db:Session=Depends(get_db)):
-    return movie_metadata_out(db,must_movie(db,movie_id))
+    return {**movie_metadata_out(db,must_movie(db,movie_id)), 'classifications': movie_classifications(db,movie_id)}
 
 @app.patch('/api/movies/{movie_id}/metadata')
 def update_movie_metadata(movie_id:int,payload:MovieMetadataPatch,db:Session=Depends(get_db),user:User=Depends(require_role('admin'))):
@@ -431,7 +448,7 @@ def update_movie_metadata(movie_id:int,payload:MovieMetadataPatch,db:Session=Dep
         db.commit()
     except IntegrityError as exc:
         db.rollback();raise HTTPException(409,'Catalog changed; reload and retry') from exc
-    return movie_metadata_out(db,m)
+    return {**movie_metadata_out(db,m), 'classifications': movie_classifications(db,m.id)}
 
 @app.get('/api/persons/{person_id}/metadata')
 def person_metadata(person_id:int,db:Session=Depends(get_db)):
@@ -449,3 +466,39 @@ def update_person_metadata(person_id:int,payload:PersonMetadataPatch,db:Session=
     except IntegrityError as exc:
         db.rollback();raise HTTPException(409,'Catalog changed; reload and retry') from exc
     return person_metadata_out(db,p)
+
+
+@app.get('/api/directory/people')
+def directory_people(q: str = Query('', max_length=200), role: CreditRole | None = None,
+                     page: int = Query(1, ge=1, le=100000), size: int = Query(24, ge=1, le=50),
+                     db: Session = Depends(get_db)):
+    if '\x00' in q:
+        raise HTTPException(422, 'Invalid search text')
+    return people_page(db, q.strip(), role, page, size)
+
+
+@app.get('/api/directory/classifications/{category}')
+def directory_classifications(category: Category, q: str = Query('', max_length=200),
+                              page: int = Query(1, ge=1, le=100000), size: int = Query(24, ge=1, le=50),
+                              db: Session = Depends(get_db)):
+    if '\x00' in q:
+        raise HTTPException(422, 'Invalid search text')
+    return classification_page(db, category, q.strip(), page, size)
+
+
+@app.get('/api/directory/filter-options')
+def directory_filter_options(db:Session=Depends(get_db)):
+    return filter_options(db)
+
+
+@app.get('/api/directory/classifications/{category}/{classification_id}')
+def directory_films(category: Category, classification_id: int,
+                    options:dict=Depends(film_search_options), db: Session = Depends(get_db)):
+    if not 0 < classification_id <= 2147483647:
+        raise HTTPException(404, 'Classification not found')
+    model, _, _ = CLASSIFICATIONS[category]
+    item = db.get(model, classification_id)
+    if item is None:
+        raise HTTPException(404, 'Classification not found')
+    return {'classification':{'id':item.id,'name':item.name},
+            **movie_search_result(db,options,scope=(category,classification_id))}
