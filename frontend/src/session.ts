@@ -1,5 +1,5 @@
 // A session boundary owns every request and every piece of mounted UI state.
-// This is client-side isolation; durable server-side sessions are a separate feature.
+// token is a non-secret session identifier, NOT the HttpOnly cookie credential.
 export type SessionScope={id:string;token:string;controller:AbortController};
 let serial=0;
 export function createSession(token:string):SessionScope{
@@ -16,9 +16,10 @@ export async function sessionRequest(scope:SessionScope,url:string,options:Reque
   signal.throwIfAborted();
   const headers=new Headers(options.headers);
   if(!headers.has('Content-Type'))headers.set('Content-Type','application/json');
-  if(scope.token)headers.set('Authorization',`Bearer ${scope.token}`);
-  else headers.delete('Authorization');
-  const r=await fetcher(url,{...options,headers,signal,cache:'no-store'});
+  headers.delete('Authorization');
+  if(scope.token)headers.set('X-Session-ID',scope.token);
+  else headers.delete('X-Session-ID');
+  const r=await fetcher(url,{...options,headers,signal,credentials:'include',cache:'no-store'});
   signal.throwIfAborted();
   if(r.status===401&&scope.token){onUnauthorized?.();signal.throwIfAborted();}
   if(r.status===204)return null;
@@ -30,6 +31,6 @@ export async function sessionRequest(scope:SessionScope,url:string,options:Reque
 // Logout runs separately from the cancelled UI scope, with the captured old token.
 export async function revokeSession(url:string,token:string,fetcher:typeof fetch=fetch){
   if(!token)return;
-  const r=await fetcher(url,{method:'POST',headers:{Authorization:`Bearer ${token}`},keepalive:true,signal:AbortSignal.timeout(8000),cache:'no-store'});
-  if(!r.ok&&r.status!==401)throw new Error('Server sign-out could not be confirmed');
+  const r=await fetcher(url,{method:'POST',headers:{'X-Session-ID':token},credentials:'include',keepalive:true,signal:AbortSignal.timeout(8000),cache:'no-store'});
+  if(!r.ok)throw new Error('Server sign-out could not be confirmed');
 }

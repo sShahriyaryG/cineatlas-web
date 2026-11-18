@@ -37,8 +37,8 @@ test('a late response from account A is discarded even if transport ignores canc
   const result=sessionRequest(a,'https://example.test/me/watchlist',{},undefined,async(_url,init)=>{oldHeaders=init.headers;return pending.promise});
   const b=replaceSession(a,a,'b');assert.ok(b);
   pending.resolve(json([{id:123}]));await assert.rejects(result,{name:'AbortError'});
-  assert.equal(oldHeaders.get('Authorization'),'Bearer a');
-  const data=await sessionRequest(b,'https://example.test/me/watchlist',{},undefined,async(_url,init)=>{assert.equal(init.headers.get('Authorization'),'Bearer b');assert.equal(init.cache,'no-store');return json([{id:456}])});
+  assert.equal(oldHeaders.get('X-Session-ID'),'a');
+  const data=await sessionRequest(b,'https://example.test/me/watchlist',{},undefined,async(_url,init)=>{assert.equal(init.headers.get('X-Session-ID'),'b');assert.equal(init.cache,'no-store');assert.equal(init.credentials,'include');assert.equal(init.headers.get('Authorization'),null);return json([{id:456}])});
   assert.deepEqual(data,[{id:456}]);
 });
 test('session change during JSON decoding also discards the old result',async()=>{
@@ -69,8 +69,8 @@ test('stale unauthorized response cannot invalidate the new user',async()=>{
 });
 test('local logout can revoke the captured old credential independently of UI abort',async()=>{
   const a=createSession('a');const guest=replaceSession(a,a,'');assert.ok(guest);
-  for(const status of [204,401])await revokeSession('https://example.test/logout',a.token,async(_url,init)=>{assert.equal(init.method,'POST');assert.equal(init.headers.Authorization,'Bearer a');assert.equal(init.signal.aborted,false);return new Response(null,{status})});
-  await assert.rejects(revokeSession('https://example.test/logout',a.token,async()=>new Response(null,{status:503})),/could not be confirmed/);
+  for(const status of [204])await revokeSession('https://example.test/logout',a.token,async(_url,init)=>{assert.equal(init.method,'POST');assert.equal(init.headers['X-Session-ID'],'a');assert.equal(init.signal.aborted,false);return new Response(null,{status})});
+  for(const status of [401,503])await assert.rejects(revokeSession('https://example.test/logout',a.token,async()=>new Response(null,{status})),/could not be confirmed/);
 });
 test('temporary network and server errors do not invalidate a valid session',async()=>{
   const a=createSession('a');let calls=0;const unauthorized=()=>calls++;
@@ -81,4 +81,11 @@ test('temporary network and server errors do not invalidate a valid session',asy
 test('a guest session cannot accidentally attach a stale authorization header',async()=>{
   const guest=createSession('');
   await sessionRequest(guest,'https://example.test/movies',{headers:{authorization:'Bearer old','X-Test':'ok'}},undefined,async(_url,init)=>{assert.equal(init.headers.get('Authorization'),null);assert.equal(init.headers.get('X-Test'),'ok');return json({items:[]})});
+});
+
+test('browser authentication explicitly includes cookies and never sends bearer credentials',async()=>{
+  await sessionRequest(createSession('session-marker'),'https://example.test/me', {headers:{Authorization:'Bearer old'}},undefined,async(_url,init)=>{assert.equal(init.credentials,'include');assert.equal(init.headers.get('Authorization'),null);assert.equal(init.headers.get('X-Session-ID'),'session-marker');return json({id:1})});
+});
+test('guest request removes caller-supplied session marker',async()=>{
+  await sessionRequest(createSession(''),'https://example.test/me',{headers:{'X-Session-ID':'old'}},undefined,async(_url,init)=>{assert.equal(init.headers.get('X-Session-ID'),null);return json({})});
 });

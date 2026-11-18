@@ -97,3 +97,8 @@
 
 /* Match the existing back-link appearance while using a native action button. */
 button.back-link{border:0;background:transparent;padding:0;cursor:pointer;font-family:inherit;text-align:left}
+
+/* Session controls; the full design system follows in the next branch. */
+.account-security-button{border:0;background:none;padding:6px;cursor:pointer}
+.authmodal form .remember-login{display:flex;align-items:center;gap:8px}.authmodal .remember-login input{width:auto;margin:0;accent-color:#f5ad64}
+.security-panel{color:inherit;width:min(580px,calc(100% - 28px));max-height:90vh;padding:clamp(18px,4vw,32px);overflow:auto}.security-panel::backdrop{background:#05070bd9}.security-panel h2{padding-right:35px}.security-panel h3{margin-top:26px}.security-panel form{display:grid;gap:12px}.security-panel form label{display:grid;gap:5px;font-size:13px}.security-panel input{width:100%;padding:10px;border:1px solid #3b4552;background:#202734;color:inherit;border-radius:7px}.session-list{list-style:none;padding:0;display:grid;gap:10px}.session-list li{border:1px solid #333e4b;border-radius:8px;padding:12px;display:flex;gap:10px;align-items:start;justify-content:space-between;flex-wrap:wrap}.session-list li div{flex:1;min-width:0;overflow-wrap:anywhere}.session-list small{display:block;color:#a7b3c1;margin-top:5px}

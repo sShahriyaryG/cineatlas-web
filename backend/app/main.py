@@ -2,33 +2,46 @@ from contextlib import asynccontextmanager
 from collections import Counter
 from datetime import datetime
 from typing import Annotated, Literal
-from fastapi import FastAPI, Depends, HTTPException, Query, Response
+from fastapi import FastAPI, Depends, HTTPException, Query, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, EmailStr, ConfigDict, field_validator
 from sqlalchemy.orm import Session
 from sqlalchemy import select, func, or_
 from sqlalchemy.exc import IntegrityError
 from .db import Base,engine,get_db
-from .models import User,Movie,Rating,Review,Watchlist,EditSuggestion,Report,MovieSource,Genre,MovieGenre,Person,MovieCredit,MovieEnrichmentField
+from .models import User,Movie,Rating,Review,Watchlist,EditSuggestion,Report,MovieSource,Genre,MovieGenre,Person,MovieCredit,MovieEnrichmentField,AuthSession
 from .catalog import set_movie_genres, parse_genres
 from .search import catalog_page, SearchMode, SortMode, GenreMode
-from .security import hash_password,verify_password,create_token,revoke_token,current_user,require_role
-from fastapi.security import HTTPBearer,HTTPAuthorizationCredentials
+from .security import (hash_password, verify_password, current_user, require_role, authenticate,
+    issue_session, transport_for, quota, event, active_sessions, revoke_all, now, aware,
+    WEB_ORIGINS, _DUMMY_HASH)
 
 @asynccontextmanager
 async def lifespan(app):
     Base.metadata.create_all(bind=engine) # development convenience; deploy with migrations
     yield
 app=FastAPI(title='CineAtlas API',version='0.4.0',lifespan=lifespan)
-app.add_middleware(CORSMiddleware,allow_origins=['http://localhost:5173','http://127.0.0.1:5173'],allow_credentials=False,allow_methods=['GET','POST','PUT','DELETE','PATCH'],allow_headers=['Authorization','Content-Type'])
+app.add_middleware(CORSMiddleware,allow_origins=list(WEB_ORIGINS),allow_credentials=True,allow_methods=['GET','POST','PUT','DELETE','PATCH'],allow_headers=['Authorization','Content-Type','X-Auth-Transport','X-Session-ID'])
+
+@app.middleware('http')
+async def prevent_api_caching(request:Request,call_next):
+    response=await call_next(request)
+    if request.url.path.startswith('/api/'):
+        response.headers['Cache-Control']='no-store'
+    return response
 
 class SignUp(BaseModel):
     username: str=Field(min_length=3,max_length=40,pattern=r'^[A-Za-z0-9_]+$')
     email: EmailStr
     password: str=Field(min_length=10,max_length=128)
+    remember: bool=False
 class Login(BaseModel):
-    identifier: str
-    password: str
+    identifier: str=Field(min_length=1,max_length=255)
+    password: str=Field(min_length=1,max_length=128)
+    remember: bool=False
+class PasswordChange(BaseModel):
+    current_password: str=Field(min_length=1,max_length=128)
+    new_password: str=Field(min_length=10,max_length=128)
 class MovieInput(BaseModel):
     title: str=Field(min_length=1,max_length=240)
     year: int=Field(ge=1888,le=2200)
@@ -69,23 +82,69 @@ def must_movie(db,id):
 @app.get('/api/health')
 def health():return {'status':'ok'}
 @app.post('/api/auth/register',status_code=201)
-def register(payload:SignUp,db:Session=Depends(get_db)):
+def register(payload:SignUp,request:Request,response:Response,db:Session=Depends(get_db)):
+    transport=transport_for(request)
+    quota(db,request,'register')
     u=User(username=payload.username,email=str(payload.email).lower(),password_hash=hash_password(payload.password))
     db.add(u)
-    try:db.commit()
+    try:
+        db.flush()
+        result=issue_session(db,u,request,response,transport,payload.remember)
     except IntegrityError:
         db.rollback();raise HTTPException(409,'Username or email already exists')
-    return {'token':create_token(u.id),'user':safe_user(u)}
+    return {**result,'user':safe_user(u)}
 @app.post('/api/auth/login')
-def login(payload:Login,db:Session=Depends(get_db)):
-    u=db.scalar(select(User).where(or_(User.email==payload.identifier.lower(),User.username==payload.identifier)))
-    if not u or not u.is_active or not verify_password(payload.password,u.password_hash):raise HTTPException(401,'Invalid credentials')
-    return {'token':create_token(u.id),'user':safe_user(u)}
+def login(payload:Login,request:Request,response:Response,db:Session=Depends(get_db)):
+    transport=transport_for(request)
+    quota(db,request,'login',payload.identifier)
+    u=db.scalar(select(User).where(or_(User.email==payload.identifier.lower(),User.username==payload.identifier)).with_for_update())
+    valid=verify_password(payload.password,u.password_hash if u else _DUMMY_HASH)
+    if not u or not u.is_active or not valid:
+        event(db,'login_failed');db.commit();raise HTTPException(401,'Invalid credentials')
+    return {**issue_session(db,u,request,response,transport,payload.remember),'user':safe_user(u)}
 @app.get('/api/auth/me')
 def me(user:User=Depends(current_user)):return safe_user(user)
 @app.post('/api/auth/logout',status_code=204)
-def logout(creds:HTTPAuthorizationCredentials=Depends(HTTPBearer()),user:User=Depends(current_user)):
-    revoke_token(creds.credentials)
+def logout(auth=Depends(authenticate),db:Session=Depends(get_db)):
+    session,user=auth
+    session.revoked_at=now();event(db,'session_revoked',user.id);db.commit()
+    # Do not send a cookie deletion that could overwrite a newer cross-tab login.
+    return Response(status_code=204)
+@app.get('/api/auth/sessions')
+def sessions(auth=Depends(authenticate),db:Session=Depends(get_db)):
+    session,user=auth
+    return [{'id':s.id,'device':s.device,'transport':s.transport,'created_at':aware(s.created_at),
+             'expires_at':aware(s.expires_at),'current':s.id==session.id} for s in active_sessions(db,user.id)]
+@app.delete('/api/auth/sessions/{session_id}',status_code=204)
+def terminate_session(session_id:str,auth=Depends(authenticate),db:Session=Depends(get_db)):
+    session,user=auth
+    target=db.get(AuthSession,session_id)
+    if not target or target.user_id!=user.id:raise HTTPException(404,'Session not found')
+    if target.revoked_at is None:
+        target.revoked_at=now();event(db,'session_revoked',user.id);db.commit()
+    return Response(status_code=204)
+@app.post('/api/auth/logout-all',status_code=204)
+def logout_all(auth=Depends(authenticate),db:Session=Depends(get_db)):
+    session,user=auth
+    user=db.scalar(select(User).where(User.id==user.id).with_for_update().execution_options(populate_existing=True))
+    db.refresh(session)
+    if not user or not user.is_active or session.revoked_at is not None or aware(session.expires_at)<=now():
+        raise HTTPException(401,'Session expired; sign in again')
+    revoke_all(db,user.id);event(db,'all_sessions_revoked',user.id);db.commit()
+    return Response(status_code=204)
+@app.post('/api/auth/password',status_code=204)
+def change_password(payload:PasswordChange,request:Request,auth=Depends(authenticate),db:Session=Depends(get_db)):
+    session,user=auth
+    quota(db,request,'password',str(user.id))
+    user=db.scalar(select(User).where(User.id==user.id).with_for_update().execution_options(populate_existing=True))
+    db.refresh(session)
+    if not user or not user.is_active or session.revoked_at is not None or aware(session.expires_at)<=now():
+        raise HTTPException(401,'Session expired; sign in again')
+    if not verify_password(payload.current_password,user.password_hash):
+        event(db,'password_change_failed',user.id);db.commit();raise HTTPException(400,'Current password is incorrect')
+    if payload.new_password==payload.current_password:raise HTTPException(422,'Choose a different password')
+    user.password_hash=hash_password(payload.new_password)
+    revoke_all(db,user.id,except_id=session.id);event(db,'password_changed',user.id);db.commit()
     return Response(status_code=204)
 @app.patch('/api/auth/me')
 def update_profile(payload:ProfileInput,user:User=Depends(current_user),db:Session=Depends(get_db)):
