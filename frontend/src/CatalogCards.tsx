@@ -13,7 +13,7 @@ export function Poster({title,src,id,eager=false}:{title:string;src:string;id:nu
 }
 export function MovieCard({movie:m,navigate}:{movie:Movie;navigate:Navigate}){
   return <NavigationLink className="movie-card" href={moviePath(m.id)} navigate={navigate} aria-label={`View ${m.title} (${m.year})`}>
-    <Poster title={m.title} src={m.poster_url} id={m.id}/><div className="movie-meta"><div className="movie-title">{m.title}</div><div className="movie-info">{m.year} <span>·</span> {m.genres.slice(0,2).join(' / ')||'Film'}</div><div className="rating"><Star size={13} fill="currentColor"/>{m.average_rating??'Unrated'} <span>{m.rating_count?`(${m.rating_count})`:''}</span></div></div>
+    <Poster title={m.title} src={m.poster_url} id={m.id}/><div className="movie-meta"><div className="movie-title">{m.title}</div><div className="movie-info">{m.year} <span>·</span> {m.genres.slice(0,2).join(' / ')||'Film'}{(m.original_language||m.language||m.spoken_languages?.[0]||m.unspecified_languages?.[0])&&<> <span>·</span> {m.original_language||m.language||m.spoken_languages?.[0]||m.unspecified_languages?.[0]}</>}</div><div className="rating"><Star size={13} fill="currentColor"/>{m.average_rating??'Unrated'} <span>{m.rating_count?`(${m.rating_count})`:''}</span></div></div>
   </NavigationLink>;
 }
 export function CatalogSkeleton(){return <div role="status" aria-label="Loading films"><span className="sr-only">Loading films…</span><div className="movie-grid" aria-hidden="true">{Array.from({length:12},(_,i)=><div key={i} className="skeleton-card"><div className="skeleton poster"/><div className="skeleton skeleton-line"/><div className="skeleton skeleton-line short"/></div>)}</div></div>}

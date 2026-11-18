@@ -9,6 +9,7 @@ from sqlalchemy import select
 from app.db import Base,engine,SessionLocal
 from app.models import Movie
 from app.catalog import set_movie_genres
+from app.metadata import sync_legacy_labels, legacy_label
 
 def import_movies(archive):
     Base.metadata.create_all(bind=engine)
@@ -36,8 +37,10 @@ def import_movies(archive):
                 genre_text = ','.join(str(x).strip().replace(',', ' / ') for x in genres)
                 if len(genre_text) > 4096:
                     raise ValueError('Genre list exceeds 4096 characters')
+                legacy_label(movie.language); legacy_label(movie.country)
                 set_movie_genres(db, movie, genre_text)
-                db.add(movie)
+                db.add(movie);db.flush()
+                sync_legacy_labels(db,movie)
                 created+=1
             except (KeyError,ValueError,TypeError) as exc:
                 skipped+=1;print('Skipped record:',str(exc))

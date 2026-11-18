@@ -1,5 +1,5 @@
-from datetime import datetime, timezone
-from sqlalchemy import String, Integer, ForeignKey, UniqueConstraint, CheckConstraint, DateTime, Text, Boolean
+from datetime import date, datetime, timezone
+from sqlalchemy import String, Integer, ForeignKey, UniqueConstraint, CheckConstraint, DateTime, Text, Boolean, Date, Index, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .db import Base
 
@@ -29,6 +29,8 @@ class Movie(Base):
     country: Mapped[str] = mapped_column(String(100),default='')
     legacy_id: Mapped[str | None] = mapped_column(String(50),unique=True,nullable=True)
     genre_entries: Mapped[list['Genre']] = relationship(secondary='movie_genres', lazy='selectin', order_by='Genre.key')
+    language_links: Mapped[list['MovieLanguage']] = relationship(lazy='selectin', cascade='all, delete-orphan')
+    country_links: Mapped[list['MovieCountry']] = relationship(lazy='selectin', cascade='all, delete-orphan')
     credits: Mapped[list['MovieCredit']] = relationship(back_populates='movie', cascade='all, delete-orphan')
     __table_args__=(CheckConstraint('year >= 1888 AND year <= 2200',name='valid_year'),)
 
@@ -116,7 +118,7 @@ class MovieCredit(Base):
     person: Mapped[Person] = relationship(lazy='joined')
     __table_args__ = (
         UniqueConstraint('movie_id', 'person_id', 'role', 'character', name='uq_movie_credit'),
-        CheckConstraint("role IN ('actor','director','writer','producer')", name='valid_credit_role'),
+        CheckConstraint("role IN ('actor','director','writer','producer','composer','cinematographer','editor','other')", name='valid_credit_role'),
         CheckConstraint("role = 'actor' OR character = ''", name='valid_credit_character'),
     )
 
@@ -167,3 +169,141 @@ class SecurityEvent(Base):
     user_id: Mapped[int | None] = mapped_column(ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True)
     kind: Mapped[str] = mapped_column(String(32))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+
+# Optional extensions keep the initial migration's core table definitions intact.
+class Language(Base):
+    __tablename__ = 'languages'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    key: Mapped[str] = mapped_column(String(480), unique=True)
+    name: Mapped[str] = mapped_column(String(120))
+    code: Mapped[str | None] = mapped_column(String(12), unique=True)
+
+
+class Country(Base):
+    __tablename__ = 'countries'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    key: Mapped[str] = mapped_column(String(480), unique=True)
+    name: Mapped[str] = mapped_column(String(120))
+    code: Mapped[str | None] = mapped_column(String(12), unique=True)
+
+
+class Tag(Base):
+    __tablename__ = 'tags'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    key: Mapped[str] = mapped_column(String(480), unique=True)
+    name: Mapped[str] = mapped_column(String(120))
+
+
+class MovieLanguage(Base):
+    __tablename__ = 'movie_languages'
+    movie_id: Mapped[int] = mapped_column(ForeignKey('movies.id', ondelete='CASCADE'), primary_key=True)
+    language_id: Mapped[int] = mapped_column(ForeignKey('languages.id', ondelete='RESTRICT'), primary_key=True, index=True)
+    kind: Mapped[str] = mapped_column(String(12), primary_key=True)
+    language: Mapped[Language] = relationship(lazy='joined')
+    __table_args__ = (
+        CheckConstraint("kind IN ('original','spoken','unspecified')", name='valid_movie_language_kind'),
+        Index('uq_movie_original_language', 'movie_id', unique=True,
+              postgresql_where=text("kind = 'original'"), sqlite_where=text("kind = 'original'")),
+    )
+
+
+class MovieCountry(Base):
+    __tablename__ = 'movie_countries'
+    movie_id: Mapped[int] = mapped_column(ForeignKey('movies.id', ondelete='CASCADE'), primary_key=True)
+    country_id: Mapped[int] = mapped_column(ForeignKey('countries.id', ondelete='RESTRICT'), primary_key=True, index=True)
+    country: Mapped[Country] = relationship(lazy='joined')
+
+
+class MovieTag(Base):
+    __tablename__ = 'movie_tags'
+    movie_id: Mapped[int] = mapped_column(ForeignKey('movies.id', ondelete='CASCADE'), primary_key=True)
+    tag_id: Mapped[int] = mapped_column(ForeignKey('tags.id', ondelete='RESTRICT'), primary_key=True, index=True)
+    tag: Mapped[Tag] = relationship(lazy='joined')
+
+
+class MovieMetadata(Base):
+    __tablename__ = 'movie_metadata'
+    movie_id: Mapped[int] = mapped_column(ForeignKey('movies.id', ondelete='CASCADE'), primary_key=True)
+    original_title: Mapped[str | None] = mapped_column(String(240))
+    release_date: Mapped[date | None] = mapped_column(Date)
+    release_status: Mapped[str | None] = mapped_column(String(16))
+    trailer_url: Mapped[str | None] = mapped_column(String(600))
+    __table_args__ = (CheckConstraint("release_status IN ('released','upcoming','in_production','cancelled')", name='valid_release_status'),)
+
+
+class MovieAlternativeTitle(Base):
+    __tablename__ = 'movie_alternative_titles'
+    movie_id: Mapped[int] = mapped_column(ForeignKey('movies.id', ondelete='CASCADE'), primary_key=True)
+    key: Mapped[str] = mapped_column(String(480), primary_key=True)
+    title: Mapped[str] = mapped_column(String(240))
+
+
+class MovieCertification(Base):
+    __tablename__ = 'movie_certifications'
+    movie_id: Mapped[int] = mapped_column(ForeignKey('movies.id', ondelete='CASCADE'), primary_key=True)
+    country_id: Mapped[int] = mapped_column(ForeignKey('countries.id', ondelete='RESTRICT'), primary_key=True, index=True)
+    rating: Mapped[str] = mapped_column(String(32), primary_key=True)
+    country: Mapped[Country] = relationship(lazy='joined')
+
+
+class MovieSoundtrack(Base):
+    __tablename__ = 'movie_soundtracks'
+    movie_id: Mapped[int] = mapped_column(ForeignKey('movies.id', ondelete='CASCADE'), primary_key=True)
+    position: Mapped[int] = mapped_column(Integer, primary_key=True)
+    title: Mapped[str] = mapped_column(String(240))
+    artist: Mapped[str] = mapped_column(String(240), default='')
+    composer: Mapped[str] = mapped_column(String(240), default='')
+    external_url: Mapped[str | None] = mapped_column(String(600))
+    __table_args__ = (CheckConstraint('position >= 0', name='valid_soundtrack_position'),)
+
+
+class MovieQuote(Base):
+    __tablename__ = 'movie_quotes'
+    movie_id: Mapped[int] = mapped_column(ForeignKey('movies.id', ondelete='CASCADE'), primary_key=True)
+    position: Mapped[int] = mapped_column(Integer, primary_key=True)
+    quote: Mapped[str] = mapped_column(String(500))
+    speaker: Mapped[str] = mapped_column(String(240), default='')
+    spoiler: Mapped[bool] = mapped_column(Boolean, default=False)
+    source_url: Mapped[str | None] = mapped_column(String(600))
+    __table_args__ = (CheckConstraint('position >= 0', name='valid_quote_position'),)
+
+
+class PersonMetadata(Base):
+    __tablename__ = 'person_metadata'
+    person_id: Mapped[int] = mapped_column(ForeignKey('persons.id', ondelete='CASCADE'), primary_key=True)
+    full_name: Mapped[str | None] = mapped_column(String(240))
+    profile_url: Mapped[str | None] = mapped_column(String(600))
+    birthday: Mapped[date | None] = mapped_column(Date)
+    deathday: Mapped[date | None] = mapped_column(Date)
+    birthplace: Mapped[str | None] = mapped_column(String(240))
+    __table_args__ = (CheckConstraint('deathday IS NULL OR birthday IS NULL OR deathday >= birthday', name='valid_person_dates'),)
+
+
+class PersonAlternativeName(Base):
+    __tablename__ = 'person_alternative_names'
+    person_id: Mapped[int] = mapped_column(ForeignKey('persons.id', ondelete='CASCADE'), primary_key=True)
+    key: Mapped[str] = mapped_column(String(480), primary_key=True)
+    name: Mapped[str] = mapped_column(String(240))
+
+
+class PersonNationality(Base):
+    __tablename__ = 'person_nationalities'
+    person_id: Mapped[int] = mapped_column(ForeignKey('persons.id', ondelete='CASCADE'), primary_key=True)
+    country_id: Mapped[int] = mapped_column(ForeignKey('countries.id', ondelete='RESTRICT'), primary_key=True, index=True)
+    country: Mapped[Country] = relationship(lazy='joined')
+
+
+class MovieMetadataOverride(Base):
+    """Explicit human edits, including intentional clears; not an audit log."""
+    __tablename__ = 'movie_metadata_overrides'
+    movie_id: Mapped[int] = mapped_column(ForeignKey('movies.id', ondelete='CASCADE'), primary_key=True)
+    field: Mapped[str] = mapped_column(String(32), primary_key=True)
+    edited_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class PersonMetadataOverride(Base):
+    __tablename__ = 'person_metadata_overrides'
+    person_id: Mapped[int] = mapped_column(ForeignKey('persons.id', ondelete='CASCADE'), primary_key=True)
+    field: Mapped[str] = mapped_column(String(32), primary_key=True)
+    edited_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
