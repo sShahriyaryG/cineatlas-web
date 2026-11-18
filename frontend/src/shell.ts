@@ -16,6 +16,6 @@ export function shellView(route:Route,authReady:boolean,signedIn:boolean):Route[
   if(route.kind!=='home')return route.kind;
   return !authReady?'checking-session':signedIn?'home':'discover';
 }
-export function isSectionActive(item:NavItem,view:string){return item.kind===view||(item.kind==='discover'&&['directory','classification','movie','person'].includes(view))||(item.kind==='watchlist'&&view==='ratings');}
+export function isSectionActive(item:NavItem,view:string){return item.kind===view||(item.kind==='discover'&&['directory','classification','movie','person','search'].includes(view))||(item.kind==='watchlist'&&view==='ratings');}
 export type LoadState='loading'|'ready'|'error';
 export function visibleCount(state:LoadState, items:readonly unknown[]):number|null{return state==='ready'?items.length:null;}

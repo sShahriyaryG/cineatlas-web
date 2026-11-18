@@ -161,3 +161,5 @@ window and check full rows on all non-final pages and correct last-page
 counts. Check release dates without a duplicate Released status, future
 scheduled dates and status-only records. No new migration or npm dependency
 is needed.
+
+For the current section-aware search and combined filter contract, see [Unified search and Explore](unified-search.md).

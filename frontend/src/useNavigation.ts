@@ -41,7 +41,7 @@ export function useNavigation(scope:string,signal:AbortSignal){
     commit({path:'/discover',entry,restore:false});
   },[scope,signal,commit]);
   useLayoutEffect(()=>{
-    const titles:Record<string,string>={home:'Home',discover:'Explore',watchlist:'My Library',ratings:'My ratings',recommended:'For you',admin:'Admin Studio',editor:'Editor Workspace',movie:'Movie',person:'Person',directory:'Explore',classification:'Explore','not-found':'Page not found'};
+    const titles:Record<string,string>={home:'Home',search:'Search archive',discover:'Explore',watchlist:'My Library',ratings:'My ratings',recommended:'For you',admin:'Admin Studio',editor:'Editor Workspace',movie:'Movie',person:'Person',directory:'Explore',classification:'Explore','not-found':'Page not found'};
     document.title=`${titles[parseRoute(location.path).kind]} — CineAtlas`;
     if(rendered.current===location.entry.key)return;
     rendered.current=location.entry.key;

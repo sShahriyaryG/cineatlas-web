@@ -15,7 +15,7 @@ from .metadata import (MovieMetadataPatch, PersonMetadataPatch, CreditRole, movi
     movie_metadata_out, person_metadata_out, apply_movie_metadata, apply_person_metadata,
     sync_legacy_labels, check_legacy_update, MOVIE_EXTENSION_MODELS, record_overrides)
 from .directory import Category, people_page, classification_page, filter_options, CLASSIFICATIONS, movie_classifications
-from .models import PersonMetadata
+from .models import PersonMetadata, MovieCertification, Country
 from .search import catalog_page, SearchMode, SortMode, GenreMode
 from .security import (hash_password, verify_password, current_user, require_role, authenticate,
     issue_session, transport_for, quota, event, active_sessions, revoke_all, now, aware,
@@ -160,6 +160,9 @@ def change_password(payload:PasswordChange,request:Request,auth=Depends(authenti
 def update_profile(payload:ProfileInput,user:User=Depends(current_user),db:Session=Depends(get_db)):
     user.bio=payload.bio;db.commit();return safe_user(user)
 
+FilterIds = Annotated[list[Annotated[int,Query(ge=1,le=2147483647)]]|None,Query(max_length=20)]
+CreditFilters = Annotated[list[str]|None,Query(max_length=20)]
+
 def film_search_options(q:str=Query('',max_length=200),mode:SearchMode='title',
            genre:str=Query('',max_length=512),genres:Annotated[list[str]|None,Query(max_length=20)]=None,
            genre_mode:GenreMode='and',year:int|None=Query(None,ge=1888,le=2200),
@@ -169,7 +172,25 @@ def film_search_options(q:str=Query('',max_length=200),mode:SearchMode='title',
            language_ids:Annotated[list[Annotated[int,Query(ge=1,le=2147483647)]]|None,Query(max_length=20)]=None,
            country_ids:Annotated[list[Annotated[int,Query(ge=1,le=2147483647)]]|None,Query(max_length=20)]=None,
            tag_ids:Annotated[list[Annotated[int,Query(ge=1,le=2147483647)]]|None,Query(max_length=20)]=None,
-           language_mode:GenreMode='and',country_mode:GenreMode='and',tag_mode:GenreMode='and'):
+           language_mode:GenreMode='and',country_mode:GenreMode='and',tag_mode:GenreMode='and',
+           genre_ids:FilterIds=None,exclude_genre_ids:FilterIds=None,exclude_language_ids:FilterIds=None,
+           exclude_country_ids:FilterIds=None,exclude_tag_ids:FilterIds=None,
+           credit:CreditFilters=None,exclude_credit:CreditFilters=None,credit_mode:GenreMode='and',
+           runtime_min:int|None=Query(None,ge=1,le=10080),runtime_max:int|None=Query(None,ge=1,le=10080),
+           certification_country:int|None=Query(None,ge=1,le=2147483647),
+           certification_rating:str|None=Query(None,min_length=1,max_length=32)):
+    def credit_pairs(values):
+        pairs=[]
+        for item in values or []:
+            ident,sep,role=item.partition(':')
+            if not sep or not ident.isascii() or not ident.isdecimal() or len(ident)>10 or not 0<int(ident)<=2147483647 or role not in {'any','actor','director','writer','producer','composer','cinematographer','editor','other'}:
+                raise HTTPException(422,'Invalid person/role filter')
+            pairs.append((int(ident),role))
+        return pairs
+    if runtime_min is not None and runtime_max is not None and runtime_min>runtime_max:
+        raise HTTPException(422,'Minimum runtime must not exceed maximum runtime')
+    if certification_rating is not None and certification_country is None:
+        raise HTTPException(422,'Certification requires a country')
     labels=[genre,*(genres or [])]
     if any(len(g)>512 or '\x00' in g for g in labels) or '\x00' in q:
         raise HTTPException(422,'Invalid search text or genre label')
@@ -179,7 +200,10 @@ def film_search_options(q:str=Query('',max_length=200),mode:SearchMode='title',
         raise HTTPException(422,'Minimum rating must not exceed maximum rating')
     return dict(q=q,mode=mode,genres=labels,genre_mode=genre_mode,year=year,
         year_min=year_min,year_max=year_max,rating_min=rating_min,rating_max=rating_max,sort=sort,page=page,size=size,
-        classifications={'languages':(language_ids or [],language_mode),'countries':(country_ids or [],country_mode),'tags':(tag_ids or [],tag_mode)})
+        runtime_min=runtime_min,runtime_max=runtime_max,certification_country=certification_country,certification_rating=certification_rating,
+        credits=credit_pairs(credit),excluded_credits=credit_pairs(exclude_credit),credit_mode=credit_mode,
+        exclusions={'genres':exclude_genre_ids,'languages':exclude_language_ids,'countries':exclude_country_ids,'tags':exclude_tag_ids},
+        classifications={'genres':(genre_ids or [],genre_mode),'languages':(language_ids or [],language_mode),'countries':(country_ids or [],country_mode),'tags':(tag_ids or [],tag_mode)})
 
 
 def movie_search_result(db, options, scope=None):
@@ -468,22 +492,24 @@ def update_person_metadata(person_id:int,payload:PersonMetadataPatch,db:Session=
     return person_metadata_out(db,p)
 
 
+DirectorySort = Literal['relevance','name','name_desc','count_desc','count_asc']
+
 @app.get('/api/directory/people')
 def directory_people(q: str = Query('', max_length=200), role: CreditRole | None = None,
-                     page: int = Query(1, ge=1, le=100000), size: int = Query(24, ge=1, le=50),
+                     page: int = Query(1, ge=1, le=100000), size: int = Query(24, ge=1, le=50), sort:DirectorySort='name',
                      db: Session = Depends(get_db)):
     if '\x00' in q:
         raise HTTPException(422, 'Invalid search text')
-    return people_page(db, q.strip(), role, page, size)
+    return people_page(db, q.strip(), role, page, size, sort)
 
 
 @app.get('/api/directory/classifications/{category}')
 def directory_classifications(category: Category, q: str = Query('', max_length=200),
-                              page: int = Query(1, ge=1, le=100000), size: int = Query(24, ge=1, le=50),
+                              page: int = Query(1, ge=1, le=100000), size: int = Query(24, ge=1, le=50), sort:DirectorySort='name',
                               db: Session = Depends(get_db)):
     if '\x00' in q:
         raise HTTPException(422, 'Invalid search text')
-    return classification_page(db, category, q.strip(), page, size)
+    return classification_page(db, category, q.strip(), page, size, sort)
 
 
 @app.get('/api/directory/filter-options')
@@ -502,3 +528,22 @@ def directory_films(category: Category, classification_id: int,
         raise HTTPException(404, 'Classification not found')
     return {'classification':{'id':item.id,'name':item.name},
             **movie_search_result(db,options,scope=(category,classification_id))}
+
+
+@app.get('/api/directory/certification-options')
+def certification_options(db:Session=Depends(get_db)):
+    rows=db.execute(select(Country.id,Country.name,MovieCertification.rating).join(MovieCertification,MovieCertification.country_id==Country.id).distinct().order_by(Country.name,Country.id,MovieCertification.rating))
+    return [dict(country_id=i,country=n,rating=r) for i,n,r in rows]
+
+
+@app.get('/api/search')
+def archive_search(q:str=Query(...,min_length=1,max_length=200),db:Session=Depends(get_db)):
+    q=' '.join(q.split())
+    if not q or '\x00' in q:
+        raise HTTPException(422,'Enter a valid search query')
+    # Reuse the same catalog/directory queries; preview bounds are fixed.
+    options=dict(q=q,mode='title',genres=[],genre_mode='and',year=None,year_min=None,year_max=None,
+                 rating_min=None,rating_max=None,sort='relevance',page=1,size=5)
+    return {'films':movie_search_result(db,options),
+            'people':people_page(db,q,None,1,5,'relevance'),
+            **{category:classification_page(db,category,q,1,5,'relevance') for category in CLASSIFICATIONS}}

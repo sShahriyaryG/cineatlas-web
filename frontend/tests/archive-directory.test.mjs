@@ -55,3 +55,28 @@ test('search parameters transmit all classification filters and responsive page 
   assert.deepEqual(p.getAll('country_ids'),['4']);assert.deepEqual(p.getAll('tag_ids'),['5','6']);assert.equal(p.get('tag_mode'),'or');
   assert.equal(searchError({...initialSearch,yearMin:'2025',yearMax:'2020'}),'Release year: minimum must not exceed maximum.');
 });
+
+import {setClassification,resetFilters} from '../src/searchOptions.ts';
+test('include and exclude are independent and choices for one classification are exclusive',()=>{
+ let s=setClassification(initialSearch,'genres',2,'include');s=setClassification(s,'genres',3,'exclude');
+ assert.deepEqual(s.genreIds,[2]);assert.deepEqual(s.excluded.genres,[3]);
+ s=setClassification(s,'genres',2,'exclude');assert.deepEqual(s.genreIds,[]);assert.deepEqual(s.excluded.genres,[3,2]);
+ s=setClassification(s,'genres',3,'neutral');const p=searchParams(s,1,14);
+ assert.deepEqual(p.getAll('exclude_genre_ids'),['2']);assert.deepEqual(p.getAll('genre_ids'),[]);assert.deepEqual(initialSearch.excluded.genres,[]);
+});
+test('automatic sorting reacts to text without losing explicit ordering',()=>{
+ assert.equal(searchParams(initialSearch,1).get('sort'),'title');
+ assert.equal(searchParams({...initialSearch,q:'Orbit'},1).get('sort'),'relevance');
+ assert.equal(searchParams({...initialSearch,q:'Orbit',sort:'title_desc'},1).get('sort'),'title_desc');
+});
+test('role filters, certification pair and runtime use typed query parameters',()=>{
+ const s={...initialSearch,credits:[{id:42,name:'Same Name',role:'director',exclude:false},{id:43,name:'Same Name',role:'actor',exclude:true}],creditMode:'or',runtimeMin:'90',runtimeMax:'150',certificationCountry:'2',certificationRating:'PG'};
+ const p=searchParams(s,2,14);assert.deepEqual(p.getAll('credit'),['42:director']);assert.deepEqual(p.getAll('exclude_credit'),['43:actor']);assert.equal(p.get('credit_mode'),'or');assert.equal(p.get('runtime_min'),'90');assert.equal(p.get('certification_country'),'2');assert.equal(p.get('certification_rating'),'PG');
+ assert.equal(searchError({...s,runtimeMin:'151'}),'Runtime: minimum must not exceed maximum.');
+ assert.match(searchError({...s,runtimeMin:'1.5'}),/whole numbers/);
+ const cleared=resetFilters({...s,q:'Orbit',sort:'rating'});assert.equal(cleared.q,'Orbit');assert.equal(cleared.sort,'rating');assert.deepEqual(cleared.credits,[]);assert.equal(cleared.certificationCountry,'');
+});
+test('global search is a separate route with Explore navigation highlighted',()=>{
+ assert.deepEqual(parseRoute('/search'),{kind:'search'});
+ assert.deepEqual(shellNavigation('admin').filter(i=>isSectionActive(i,'search')).map(i=>i.href),['/discover']);
+});
