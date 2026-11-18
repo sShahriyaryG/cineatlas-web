@@ -1,4 +1,3 @@
-import {useState} from 'react';
 import {Search, Filter, X} from 'lucide-react';
 export type SearchOptions = {q:string; mode:string; genres:string[]; genreMode:'and'|'or'; sort:string; yearMin:string; yearMax:string; ratingMin:string; ratingMax:string};
 export const initialSearch:SearchOptions = {q:'', mode:'title', genres:[], genreMode:'and', sort:'relevance', yearMin:'', yearMax:'', ratingMin:'', ratingMax:''};
@@ -16,8 +15,7 @@ export function searchParams(s:SearchOptions,page:number):URLSearchParams {
   for(const [k,v] of Object.entries({year_min:s.yearMin,year_max:s.yearMax,rating_min:s.ratingMin,rating_max:s.ratingMax})) if(v!=='') p.set(k,v);
   return p;
 }
-export function SearchFilters({value,genres,onChange}:{value:SearchOptions;genres:string[];onChange:(s:SearchOptions)=>void}) {
-  const [expanded,setExpanded]=useState(false);
+export function SearchFilters({value,genres,onChange,expanded,onExpandedChange}:{value:SearchOptions;genres:string[];onChange:(s:SearchOptions)=>void;expanded:boolean;onExpandedChange:(v:boolean)=>void}) {
   const update=(patch:Partial<SearchOptions>)=>onChange({...value,...patch});
   const error=searchError(value);
   const filterCount=value.genres.length+Number(!!(value.yearMin||value.yearMax))+Number(!!(value.ratingMin||value.ratingMax));
@@ -28,7 +26,7 @@ export function SearchFilters({value,genres,onChange}:{value:SearchOptions;genre
       <div className="searchbox"><Search size={19}/><input aria-label="Search films" maxLength={200} value={value.q} placeholder={hints[value.mode]} onChange={e=>update({q:e.target.value})}/>{value.q&&<button className="search-clear" type="button" aria-label="Clear search" onClick={()=>update({q:''})}><X size={18}/></button>}</div>
       <label className="search-select"><span>Search in</span><select value={value.mode} onChange={e=>update({mode:e.target.value})}><option value="title">Movie titles</option><option value="synopsis">Synopses</option><option value="actor">Actors</option><option value="director">Directors</option><option value="all">All fields</option></select></label>
       <label className="search-select"><span>Sort by</span><select value={value.sort} onChange={e=>update({sort:e.target.value})}><option value="relevance">Best match</option><option value="title">Title A–Z</option><option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="rating">Highest rated</option><option value="most_rated">Most rated</option></select></label>
-      <button type="button" className="search-secondary" aria-expanded={expanded} aria-controls="advanced-filters" onClick={()=>setExpanded(v=>!v)}><Filter size={17}/> Filters{filterCount>0?` (${filterCount})`:''}</button>
+      <button type="button" className="search-secondary" aria-expanded={expanded} aria-controls="advanced-filters" onClick={()=>onExpandedChange(!expanded)}><Filter size={17}/> Filters{filterCount>0?` (${filterCount})`:''}</button>
       {active&&<button className="search-reset" type="button" onClick={()=>onChange({...initialSearch,genres:[]})}>Reset all</button>}
     </div>
     {expanded&&<div className="advanced-panel" id="advanced-filters">

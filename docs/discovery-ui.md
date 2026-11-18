@@ -16,7 +16,7 @@ CineAtlas uses the browser History API with ordinary anchor links and client-sid
 
 IDs are positive PostgreSQL integer primary keys. Invalid routes display a not-found view. Existing backend role checks remain authoritative. Movie/person links support normal browser behavior such as opening a new tab, refresh, and back/forward. Vite's development server handles direct route refreshes. Production hosting must serve `index.html` for unknown frontend paths while keeping API and static asset routes separate. Frontend paths assume deployment at the origin root.
 
-Search and pagination state survive navigation within the same SPA session; filter expansion may reset. Back/forward scroll restoration is best-effort, especially when a detail page needs to reload. Search state is not encoded in the URL and is reset by a full reload.
+Search, filter expansion and pagination state survive navigation within the same in-memory session. The detail-page Back action follows same-session history, with a Discover fallback for direct links. Back/forward scroll restoration is best-effort, especially when a detail page needs to reload. Search state is not encoded in the URL and is reset by a full reload or authentication transition. See [Navigation and session isolation](navigation-session.md) for history boundaries and session behavior.
 
 ## Data and interface
 
@@ -34,11 +34,11 @@ From the project root with Docker running:
 docker compose up -d --build api web
 docker compose exec api alembic current
 docker compose exec api pytest -q
-docker compose exec web node --experimental-strip-types --test tests/discovery.test.mjs
+docker compose exec web node --experimental-strip-types --test tests/*.test.mjs
 docker compose exec web npm run build
 ```
 
-Expected schema head: `0004_enrichment_sources`. Expected backend suite: 59 passing tests, including two new tests for person filmography data, public linked movie lookup, and missing/empty records. Node 22 runs three pure frontend logic tests for route parsing and grouping credits (no extra dependency). These tests are not browser end-to-end tests.
+Expected schema head: `0004_enrichment_sources`. Expected backend suite: 59 passing tests, including two new tests for person filmography data, public linked movie lookup, and missing/empty records. Node 22 runs the frontend logic suite, including three original tests for route parsing and grouping credits (no extra dependency). These tests are not browser end-to-end tests.
 
 Manual verification: open Discovery, search and paginate, open a movie, refresh the deep URL and use the browser back/forward buttons. Open a cast member and navigate from their filmography back to a movie. Test nonexistent movie/person and unsupported routes, poster fallback, sign-in, saving/removing a movie, rating, posting a review, revealing spoilers, and reporting a review. Verify admin and editor access and workflows, attribution, keyboard focus, and narrow-screen layout. Use a test account and a disposable review for write tests; avoid reporting genuine reviews merely for testing. A browser/network devtools offline mode can test error UI; restore it afterward.
 
