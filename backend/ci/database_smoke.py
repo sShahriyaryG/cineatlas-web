@@ -122,6 +122,45 @@ def main():
         assert {c['role'] for c in checked_json(client.get(f'/api/persons/{person_id}'))['credits']}=={'director','composer'}
         assert client.post('/api/auth/logout', headers=headers).status_code == 204
         assert client.get('/api/auth/me', headers=headers).status_code == 401
+    # Exercise enrichment on the migrated database without HTTP or secrets.
+    from app.enrichment_v2 import enrich_linked
+    from app.models import Movie, MovieSource, PersonSource, PersonEnrichmentField, MovieEnrichmentField
+    from app.metadata import movie_metadata_out, person_metadata_out
+    from sqlalchemy import select, func
+
+    class FixtureProvider:
+        poster_base='https://image.tmdb.org/t/p/w500'
+        profile_base='https://image.tmdb.org/t/p/w185'
+        languages={'en':'English'}
+        countries={'CA':'Canada'}
+        def configuration(self): pass
+        def linked_movie(self, external):
+            return {'id':int(external),'imdb_id':'tt0000007','release_date':'2020-01-01',
+                    'original_language':'en','production_countries':[{'iso_3166_1':'CA'}],
+                    'credits':{'cast':[{'id':42,'name':'CI Synthetic Actor','character':'Fixture'}],'crew':[]}}
+        def linked_person(self, external):
+            return {'id':int(external),'biography':'Fixture biography','profile_path':'/fixture.jpg'}
+
+    with SessionLocal() as db:
+        film=Movie(title='Synthetic enrichment film',year=2020)
+        db.add(film); db.flush(); fid=film.id
+        db.add_all([MovieSource(source='tmdb',external_id='7',movie_id=fid),
+                    MovieSource(source='imdb',external_id='tt0000007',movie_id=fid)])
+        db.commit()
+        r=enrich_linked(db,FixtureProvider())
+        assert r.matched==1 and r.person_fields_filled==2
+        db.rollback()
+        assert db.scalar(select(func.count()).select_from(PersonEnrichmentField))==0
+        assert movie_metadata_out(db,db.get(Movie,fid))['original_language'] is None
+        enrich_linked(db,FixtureProvider(),dry_run=False); db.commit()
+        assert movie_metadata_out(db,db.get(Movie,fid))['production_countries']==['Canada']
+        pid=db.get(PersonSource,('tmdb','42')).person_id
+        assert person_metadata_out(db,db.get(Person,pid))['profile_url'].endswith('/fixture.jpg')
+        assert db.get(PersonEnrichmentField,(pid,'biography','tmdb')) is not None
+        assert db.get(MovieEnrichmentField,(fid,'production_countries','tmdb')) is not None
+        r=enrich_linked(db,FixtureProvider(),dry_run=False); db.commit()
+        assert r.fields_filled==r.person_fields_filled==r.credits_created==0
+    print('PASS: extended enrichment preview rollback, import provenance and idempotency.', flush=True)
     print('PASS: legacy language/country backfill, metadata permissions, manual overrides and extended credit roles.', flush=True)
     print('PASS: durable session creation and revocation.', flush=True)
     print('PASS: legacy genre backfill, title/synopsis/director search, filmography, auth, rating and watchlist.', flush=True)

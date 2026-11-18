@@ -195,10 +195,10 @@ def update_movie(movie_id:int,payload:MovieInput,db:Session=Depends(get_db),user
     try: check_legacy_update(m,values['language'],values['country'])
     except ValueError as exc: raise HTTPException(409,str(exc)) from exc
     language_changed=values['language']!=m.language;country_changed=values['country']!=m.country
+    fields={k for k in ('synopsis','poster_url','runtime') if values[k]!=getattr(m,k)}
     for k,v in values.items():setattr(m,k,v)
     set_movie_genres(db,m,payload.genres)
     sync_legacy_labels(db,m,language_changed=language_changed,country_changed=country_changed)
-    fields=set()
     if language_changed:
         fields.add('unspecified_languages')
         if not m.language.strip(): fields.update(('original_language','spoken_languages'))
@@ -313,7 +313,9 @@ def decide(id:int,decision:str,user:User=Depends(require_role('admin')),db:Sessi
     s=db.get(EditSuggestion,id)
     if not s:raise HTTPException(404,'Suggestion not found')
     if s.status!='pending':raise HTTPException(409,'Already reviewed')
-    if decision=='approved':must_movie(db,s.movie_id).synopsis=s.synopsis
+    if decision=='approved':
+        must_movie(db,s.movie_id).synopsis=s.synopsis
+        record_overrides(db,MovieMetadataOverride,'movie_id',s.movie_id,{'synopsis'})
     s.status=decision;db.commit();return {'status':s.status}
 @app.get('/api/admin/reports')
 def reports(user:User=Depends(require_role('admin')),db:Session=Depends(get_db)):
@@ -379,6 +381,8 @@ def create_person(payload: PersonInput, db: Session = Depends(get_db), user: Use
 @app.put('/api/persons/{person_id}')
 def update_person(person_id: int, payload: PersonInput, db: Session = Depends(get_db), user: User = Depends(require_role('admin'))):
     person = must_person(db, person_id)
+    if person.biography != payload.biography:
+        record_overrides(db,PersonMetadataOverride,'person_id',person.id,{'biography'})
     person.name = payload.name; person.biography = payload.biography
     db.commit()
     return person_out(person)
@@ -397,6 +401,7 @@ def create_credit(movie_id: int, payload: CreditInput, db: Session = Depends(get
     credit = MovieCredit(movie_id=movie_id, **payload.model_dump())
     db.add(credit)
     try:
+        record_overrides(db,MovieMetadataOverride,'movie_id',movie_id,{'credits_'+payload.role})
         db.commit()
     except IntegrityError:
         db.rollback()
@@ -408,6 +413,7 @@ def delete_credit(movie_id: int, credit_id: int, db: Session = Depends(get_db), 
     credit = db.get(MovieCredit, credit_id)
     if not credit or credit.movie_id != movie_id:
         raise HTTPException(404, 'Credit not found')
+    record_overrides(db,MovieMetadataOverride,'movie_id',movie_id,{'credits_'+credit.role})
     db.delete(credit); db.commit()
     return Response(status_code=204)
 
