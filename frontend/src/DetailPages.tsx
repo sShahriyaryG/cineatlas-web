@@ -1,30 +1,23 @@
 import {useEffect,useState} from 'react';
-import {ArrowLeft,Bookmark,Star,Clock,UserRound,Film,ChevronRight} from 'lucide-react';
+import {ArrowLeft,Bookmark,Star,Clock,Film,ChevronRight} from 'lucide-react';
 import {NavigationLink,type Navigate} from './NavigationLink';
 import {moviePath} from './navigation';
 import type {BackNavigation} from './useNavigation';
 import {Poster} from './CatalogCards';
+import {useResource} from './useResource';
+import {Portrait,MovieArchive,PersonFacts,ClassificationLinks,MetadataStatus} from './ArchiveMetadata';
+import type {MovieMetadata,PersonMetadata} from './catalogTypes';
 import {MovieCredits} from './MovieCredits';
 import {ReviewForm} from './ReviewForm';
 import {ReviewReport} from './ReviewReport';
 import {groupFilmography,roleLabel,type Api,type Movie,type User,type Review,type Person} from './catalogTypes';
 
-type Result<T>={status:'loading'}|{status:'error';message:string;notFound:boolean}|{status:'ready';data:T};
-function useResource<T>(request:Api,path:string,revision=0){
-  const [result,setResult]=useState<Result<T>>({status:'loading'});
-  const [attempt,setAttempt]=useState(0);
-  useEffect(()=>{
-    let active=true;const controller=new AbortController();setResult({status:'loading'});
-    request(path,{signal:controller.signal}).then(data=>{if(active)setResult({status:'ready',data})}).catch(e=>{if(active)setResult({status:'error',message:e instanceof Error?e.message:'Request failed',notFound:e?.status===404})});
-    return ()=>{active=false;controller.abort()};
-  },[request,path,revision,attempt]);
-  return {result,retry:()=>setAttempt(v=>v+1),replace:(data:T)=>setResult({status:'ready',data})};
-}
 function Back({back}:{back:BackNavigation}){return <button type="button" className="back-link" onClick={back.goBack}><ArrowLeft size={17}/> {back.hasPrevious?'Back':'Discover films'}</button>}
 export function PageMessage({title,description,back,retry}:{title:string;description:string;back:BackNavigation;retry?:()=>void}){return <section className="main-content subpage"><Back back={back}/><div className="empty" role="status"><Film size={36}/><h1>{title}</h1><p>{description}</p>{retry&&<button className="primary" onClick={retry}>Try again</button>}</div></section>}
 function DetailLoading({back}:{back:BackNavigation}){return <section className="main-content subpage"><Back back={back}/><div className="detail-loading" role="status" aria-label="Loading details"><div className="skeleton poster"/><div><div className="skeleton skeleton-line short"/><div className="skeleton skeleton-heading"/><div className="skeleton skeleton-line"/><div className="skeleton skeleton-line"/></div><span className="sr-only">Loading details…</span></div></section>}
 export function MoviePage({id,request,navigate,back,user,saved,watchState,onSignIn,onWatch,onRating,notify}:{id:number;request:Api;navigate:Navigate;back:BackNavigation;user:User|null;saved:boolean;watchState:'loading'|'ready'|'error';onSignIn:()=>void;onWatch:(movie:Movie)=>Promise<void>;onRating:(movie:Movie)=>void;notify:(message:string)=>void}){
   const movie=useResource<Movie>(request,`/movies/${id}`);
+  const metadata=useResource<MovieMetadata>(request,`/movies/${id}/metadata`);
   const [busy,setBusy]=useState(false);
   const [score,setScore]=useState('');
   const [watchBusy,setWatchBusy]=useState(false);
@@ -38,11 +31,12 @@ export function MoviePage({id,request,navigate,back,user,saved,watchState,onSign
     <Back back={back}/>
     <section className="movie-feature" aria-labelledby="film-heading"><div className="feature-poster"><Poster title={m.title} src={m.poster_url} id={m.id} eager/></div><div className="feature-content">
       <span className="overline">FILM / {m.year}</span><h1 id="film-heading">{m.title}</h1><div className="feature-facts"><span>{m.year}</span>{m.runtime&&<span><Clock size={16}/>{m.runtime} min</span>}{(m.original_language||m.language)&&<span>{m.original_language||m.language}</span>}{(m.production_countries?.length?m.production_countries:[m.country].filter(Boolean)).map(country=><span key={country}>{country}</span>)}</div>
-      <div className="genre-tags">{m.genres.map(g=><span key={g}>{g}</span>)}</div>
+      <div className="genre-tags">{metadata.result.status==='ready'&&metadata.result.data.classifications.genres.length>0?<ClassificationLinks category="genres" items={metadata.result.data.classifications.genres} navigate={navigate}/>:m.genres.map(g=><span key={g}>{g}</span>)}</div>
       <div className="feature-rating"><Star size={24} fill="currentColor"/><strong>{m.average_rating??'Unrated'}{m.average_rating!==null&&<small> / 10</small>}</strong><span>{m.rating_count} {m.rating_count===1?'community rating':'community ratings'}</span></div>
       <h2 className="synopsis-heading">Synopsis</h2><p className="synopsis">{m.synopsis||'No synopsis is available yet.'}</p>
       <div className="feature-actions"><button className={saved?'secondary-button':'primary'} disabled={watchBusy||watchState==='loading'} aria-pressed={saved} onClick={async()=>{setWatchBusy(true);try{await onWatch(m)}finally{setWatchBusy(false)}}}><Bookmark size={18} fill={saved?'currentColor':'none'}/>{watchState==='loading'?'Loading watchlist…':watchState==='error'?'Retry watchlist':saved?'Saved to watchlist':'Add to watchlist'}</button><form className="rate-form" onSubmit={e=>{e.preventDefault();void rate()}}><label className="rating-select">Your rating<select value={score} onChange={e=>setScore(e.target.value)} required><option value="" disabled>1–10</option>{Array.from({length:10},(_,i)=><option key={i+1} value={i+1}>{i+1} / 10</option>)}</select></label><button className="secondary-button" disabled={!score||busy}>{busy?'Saving…':'Rate film'}</button></form></div>
     </div></section>
+    {metadata.result.status==='ready'?<MovieArchive data={metadata.result.data} navigate={navigate}/>:<MetadataStatus result={metadata.result} retry={metadata.retry}/>}
     <div className="detail-layout"><MovieCredits movieId={id} request={request} navigate={navigate}/><Reviews movieId={id} request={request} user={user} onSignIn={onSignIn} notify={notify}/></div>
   </article>;
 }
@@ -56,12 +50,13 @@ function Reviews({movieId,request,user,onSignIn,notify}:{movieId:number;request:
 }
 export function PersonPage({id,request,navigate,back}:{id:number;request:Api;navigate:Navigate;back:BackNavigation}){
   const person=useResource<Person>(request,`/persons/${id}`);
+  const metadata=useResource<PersonMetadata>(request,`/persons/${id}/metadata`);
   const title=person.result.status==='ready'?person.result.data.name:null;
   useEffect(()=>{if(title)document.title=`${title} — CineAtlas`},[title]);
   if(person.result.status==='loading')return <DetailLoading back={back}/>;
   if(person.result.status==='error')return <PageMessage title={person.result.notFound?'Person not found':'Could not load this person'} description={person.result.message} back={back} retry={person.result.notFound?undefined:person.retry}/>;
   const p=person.result.data;const films=groupFilmography(p.credits);const roles=[...new Set(p.credits.map(c=>roleLabel[c.role]||c.role))];
-  return <article className="main-content person-page"><Back back={back}/><section className="person-feature"><div className="person-avatar" aria-hidden="true"><UserRound size={50}/><span>{p.name.split(/\s+/).slice(0,2).map(n=>n[0]).join('').toUpperCase()}</span></div><div><span className="overline">PEOPLE / CINEATLAS</span><h1>{p.name}</h1><p className="feature-facts">{roles.join(' · ')||'Catalog person'}</p><p className="synopsis">{p.biography||'A biography has not been added to CineAtlas yet.'}</p><span className="muted">{films.length} {films.length===1?'film':'films'} in the CineAtlas catalog</span></div></section>
+  return <article className="main-content person-page"><Back back={back}/><section className="person-feature"><Portrait name={p.name} src={metadata.result.status==='ready'?metadata.result.data.profile_url:null} eager/><div><span className="overline">PEOPLE / CINEATLAS</span><h1>{p.name}</h1><p className="feature-facts">{roles.join(' · ')||'Catalog person'}</p>{metadata.result.status==='ready'?<PersonFacts data={metadata.result.data} name={p.name}/>:<MetadataStatus result={metadata.result} retry={metadata.retry}/>}<p className="synopsis person-biography">{p.biography||'A biography has not been added to CineAtlas yet.'}</p><span className="muted">{films.length} {films.length===1?'film':'films'} in the CineAtlas catalog</span></div></section>
     <section className="filmography" aria-labelledby="filmography-heading"><div className="section-title"><div><span className="overline">IN OUR COLLECTION</span><h2 id="filmography-heading">Filmography<span className="accent">.</span></h2></div></div><p className="muted">Credits available in CineAtlas, not a complete career history.</p>{films.length? <div className="filmography-list">{films.map(f=><NavigationLink key={f.movie_id} className="filmography-card" href={moviePath(f.movie_id)} navigate={navigate}><Poster title={f.title} src={f.poster_url} id={f.movie_id}/><div><h3>{f.title}</h3><span className="muted">{f.year}</span><ul>{f.credits.map((c,i)=><li key={`${c.role}-${c.character}-${i}`}>{roleLabel[c.role]||c.role}{c.character?` · ${c.character}`:''}</li>)}</ul></div><ChevronRight size={18}/></NavigationLink>)}</div>:<div className="empty"><Film size={30}/><h3>No film credits yet</h3><p>Credits will appear here when added to the catalog.</p></div>}</section>
   </article>;
 }

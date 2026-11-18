@@ -11,3 +11,10 @@ export function groupFilmography(credits:PersonCredit[]){
   for(const credit of credits){let film=films.get(credit.movie_id);if(!film){film={movie_id:credit.movie_id,title:credit.title,year:credit.year,poster_url:credit.poster_url,credits:[]};films.set(credit.movie_id,film)}film.credits.push(credit)}
   return [...films.values()];
 }
+
+export type Classification={id:number;name:string;kind?:'original'|'spoken'|'unspecified'};
+export type MovieMetadata={movie_id:number;original_title:string|null;alternative_titles:string[];release_date:string|null;release_status:string|null;trailer_url:string|null;original_language:string|null;spoken_languages:string[];unspecified_languages:string[];production_countries:string[];tags:string[];certifications:{country:string;rating:string}[];soundtracks:{title:string;artist:string;composer:string;external_url:string|null}[];quotes:{quote:string;speaker:string;spoiler:boolean;source_url:string|null}[];classifications:Record<import('./navigation').Category,Classification[]>};
+export type PersonMetadata={person_id:number;full_name:string|null;profile_url:string|null;birthday:string|null;deathday:string|null;birthplace:string|null;alternative_names:string[];nationalities:string[]};
+export type DirectoryPerson={id:number;name:string;profile_url:string|null;roles:string[];film_count:number};
+export type DirectoryClassification=Classification & {film_count:number};
+export type Page<T>={items:T[];total:number;page:number;size:number};

@@ -1,8 +1,9 @@
 import {NavigationLink,type Navigate} from './NavigationLink';
 import {personPath} from './navigation';
+import {Portrait} from './ArchiveMetadata';
 import {useEffect, useState} from 'react';
 
-type Credit = { id:number; person_id:number; name:string; role:string; character:string };
+type Credit = { id:number; person_id:number; name:string; role:string; character:string; profile_url?:string|null };
 type Request = (path:string, options?:RequestInit)=>Promise<unknown>;
 const groups = [{key:'director',label:'Directed by'},{key:'writer',label:'Written by'}, {key:'actor',label:'Cast'}, {key:'producer',label:'Produced by'},{key:'composer',label:'Music by'},{key:'cinematographer',label:'Cinematography'},{key:'editor',label:'Edited by'},{key:'other',label:'Other crew'}];
 
@@ -27,7 +28,7 @@ export function MovieCredits({movieId,request,navigate}:{movieId:number;request:
     {status==='ready'&&!credits.length&&<p className="muted">No credits have been added yet.</p>}
     {status==='ready'&&groups.map(group=>{
       const items=credits.filter(c=>c.role===group.key);
-      return items.length>0&&<div key={group.key} className="credit-group"><h4>{group.label}</h4><ul>{items.map(c=><li key={c.id}><NavigationLink className="person-link" href={personPath(c.person_id)} navigate={navigate}>{c.name}</NavigationLink>{c.character&&<span>{c.character}</span>}</li>)}</ul></div>;
+      return items.length>0&&<div key={group.key} className="credit-group"><h4>{group.label}</h4><ul>{items.map(c=><li key={c.id}><NavigationLink className="person-link" href={personPath(c.person_id)} navigate={navigate}><Portrait name={c.name} src={c.profile_url}/><strong>{c.name}</strong>{c.character&&<span>{c.character}</span>}</NavigationLink></li>)}</ul></div>;
     })}
   </section>;
 }

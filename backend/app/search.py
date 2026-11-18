@@ -3,6 +3,7 @@ from typing import Literal
 from sqlalchemy import and_, case, func, or_, select
 from .catalog import genre_key
 from .models import Genre, Movie, MovieCredit, Person, Rating
+from .directory import CLASSIFICATIONS
 
 SearchMode = Literal['title', 'synopsis', 'actor', 'director', 'all']
 SortMode = Literal['relevance', 'title', 'newest', 'oldest', 'rating', 'most_rated']
@@ -20,7 +21,7 @@ def person_match(pattern, roles):
 
 
 def catalog_page(db, *, q, mode, genres, genre_mode, year, year_min, year_max,
-                 rating_min, rating_max, sort, page, size):
+                 rating_min, rating_max, sort, page, size, classifications=None, scope=None):
     """Return matching movies and aggregate ratings with deterministic pagination."""
     ratings = select(Rating.movie_id.label('mid'), func.avg(Rating.score).label('avg'),
                      func.count(Rating.id).label('n')).group_by(Rating.movie_id).subquery()
@@ -44,6 +45,21 @@ def catalog_page(db, *, q, mode, genres, genre_mode, year, year_min, year_max,
         else:
             for key in keys:
                 stmt = stmt.where(Movie.genre_entries.any(Genre.key == key))
+    # Independent EXISTS predicates avoid duplicate rows (e.g. original and spoken languages).
+    if scope is not None:
+        category, ident = scope
+        _, link, fk = CLASSIFICATIONS[category]
+        stmt = stmt.where(select(link.movie_id).where(link.movie_id == Movie.id, fk == ident).exists())
+    for category, (ids, matching) in (classifications or {}).items():
+        _, link, fk = CLASSIFICATIONS[category]
+        ids = sorted(set(ids))
+        if not ids:
+            continue
+        if matching == 'or':
+            stmt = stmt.where(select(link.movie_id).where(link.movie_id == Movie.id, fk.in_(ids)).exists())
+        else:
+            for ident in ids:
+                stmt = stmt.where(select(link.movie_id).where(link.movie_id == Movie.id, fk == ident).exists())
     if year is not None: stmt = stmt.where(Movie.year == year)
     if year_min is not None: stmt = stmt.where(Movie.year >= year_min)
     if year_max is not None: stmt = stmt.where(Movie.year <= year_max)
