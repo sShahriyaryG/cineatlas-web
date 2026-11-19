@@ -11,6 +11,8 @@ from sqlalchemy.exc import IntegrityError
 from .db import Base,engine,get_db
 from .models import User,Movie,Rating,Review,Watchlist,EditSuggestion,Report,MovieSource,Genre,MovieGenre,Person,MovieCredit,MovieEnrichmentField,AuthSession,MovieMetadataOverride,PersonMetadataOverride
 from .catalog import set_movie_genres, parse_genres
+from .catalog_lock import lock_catalog
+from .contributions import router as contributions_router
 from .metadata import (MovieMetadataPatch, PersonMetadataPatch, CreditRole, movie_summary,
     movie_metadata_out, person_metadata_out, apply_movie_metadata, apply_person_metadata,
     sync_legacy_labels, check_legacy_update, MOVIE_EXTENSION_MODELS, record_overrides)
@@ -26,6 +28,7 @@ async def lifespan(app):
     Base.metadata.create_all(bind=engine) # development convenience; deploy with migrations
     yield
 app=FastAPI(title='CineAtlas API',version='0.5.0',lifespan=lifespan)
+app.include_router(contributions_router)
 app.add_middleware(CORSMiddleware,allow_origins=list(WEB_ORIGINS),allow_credentials=True,allow_methods=['GET','POST','PUT','DELETE','PATCH'],allow_headers=['Authorization','Content-Type','X-Auth-Transport','X-Session-ID'])
 
 @app.middleware('http')
@@ -222,10 +225,12 @@ def movie_detail(movie_id:int,db:Session=Depends(get_db)):
     return movie_out(db,must_movie(db,movie_id))
 @app.post('/api/movies',status_code=201)
 def create_movie(payload:MovieInput,db:Session=Depends(get_db),user:User=Depends(require_role('admin'))):
+    lock_catalog(db)
     m=Movie(**payload.model_dump(exclude={'genres'}));set_movie_genres(db,m,payload.genres);db.add(m);db.flush()
     sync_legacy_labels(db,m);db.commit();db.refresh(m);return movie_out(db,m)
 @app.put('/api/movies/{movie_id}')
 def update_movie(movie_id:int,payload:MovieInput,db:Session=Depends(get_db),user:User=Depends(require_role('admin'))):
+    lock_catalog(db)
     m=must_movie(db,movie_id)
     values=payload.model_dump(exclude={'genres'})
     for field in ('language','country'):
@@ -245,6 +250,7 @@ def update_movie(movie_id:int,payload:MovieInput,db:Session=Depends(get_db),user
     db.commit();return movie_out(db,m)
 @app.delete('/api/movies/{movie_id}',status_code=204)
 def delete_movie(movie_id:int,db:Session=Depends(get_db),user:User=Depends(require_role('admin'))):
+    lock_catalog(db)
     m=must_movie(db,movie_id)
     review_ids=select(Review.id).where(Review.movie_id==movie_id)
     db.query(Report).filter(Report.review_id.in_(review_ids)).delete(synchronize_session=False)
@@ -347,10 +353,12 @@ def suggestions(user:User=Depends(require_role('admin')),db:Session=Depends(get_
     return [{'id':s.id,'movie_id':s.movie_id,'movie_title':s.movie.title,'current_synopsis':s.movie.synopsis,'submitted_by':db.get(User,s.user_id).username,'synopsis':s.synopsis,'reason':s.reason,'status':s.status} for s in db.scalars(select(EditSuggestion).order_by(EditSuggestion.id.desc()))]
 @app.post('/api/admin/suggestions/{id}/{decision}')
 def decide(id:int,decision:str,user:User=Depends(require_role('admin')),db:Session=Depends(get_db)):
+    lock_catalog(db)
     if decision not in ('approved','rejected'):raise HTTPException(422,'Invalid decision')
-    s=db.get(EditSuggestion,id)
+    s=db.scalar(select(EditSuggestion).where(EditSuggestion.id==id).with_for_update())
     if not s:raise HTTPException(404,'Suggestion not found')
     if s.status!='pending':raise HTTPException(409,'Already reviewed')
+    if s.user_id==user.id:raise HTTPException(403,'A different administrator must review your proposal')
     if decision=='approved':
         must_movie(db,s.movie_id).synopsis=s.synopsis
         record_overrides(db,MovieMetadataOverride,'movie_id',s.movie_id,{'synopsis'})
@@ -386,7 +394,7 @@ def person_out(person):
 
 def credit_out(credit):
     return {'id': credit.id, 'person_id': credit.person_id, 'name': credit.person.name,
-            'role': credit.role, 'character': credit.character}
+            'role': credit.role, 'character': credit.character, 'position': credit.position}
 
 def must_person(db, person_id):
     person = db.get(Person, person_id)
@@ -412,12 +420,14 @@ def person_detail(person_id: int, db: Session = Depends(get_db)):
 
 @app.post('/api/persons', status_code=201)
 def create_person(payload: PersonInput, db: Session = Depends(get_db), user: User = Depends(require_role('admin'))):
+    lock_catalog(db)
     person = Person(**payload.model_dump())
     db.add(person); db.commit()
     return person_out(person)
 
 @app.put('/api/persons/{person_id}')
 def update_person(person_id: int, payload: PersonInput, db: Session = Depends(get_db), user: User = Depends(require_role('admin'))):
+    lock_catalog(db)
     person = must_person(db, person_id)
     if person.biography != payload.biography:
         record_overrides(db,PersonMetadataOverride,'person_id',person.id,{'biography'})
@@ -428,13 +438,14 @@ def update_person(person_id: int, payload: PersonInput, db: Session = Depends(ge
 @app.get('/api/movies/{movie_id}/credits')
 def movie_credits(movie_id: int, db: Session = Depends(get_db)):
     movie = must_movie(db, movie_id)
-    credits = sorted(movie.credits, key=lambda c: (c.role, c.person.name.casefold(), c.id))
+    credits = sorted(movie.credits, key=lambda c: (c.role, c.position is None, c.position or 0, c.person.name.casefold(), c.id))
     ids = {c.person_id for c in credits}
     photos = dict(db.execute(select(PersonMetadata.person_id, PersonMetadata.profile_url).where(PersonMetadata.person_id.in_(ids))).all()) if ids else {}
     return [{**credit_out(c), 'profile_url': photos.get(c.person_id)} for c in credits]
 
 @app.post('/api/movies/{movie_id}/credits', status_code=201)
 def create_credit(movie_id: int, payload: CreditInput, db: Session = Depends(get_db), user: User = Depends(require_role('admin'))):
+    lock_catalog(db)
     must_movie(db, movie_id)
     must_person(db, payload.person_id)
     if payload.role != 'actor' and payload.character:
@@ -451,6 +462,7 @@ def create_credit(movie_id: int, payload: CreditInput, db: Session = Depends(get
 
 @app.delete('/api/movies/{movie_id}/credits/{credit_id}', status_code=204)
 def delete_credit(movie_id: int, credit_id: int, db: Session = Depends(get_db), user: User = Depends(require_role('admin'))):
+    lock_catalog(db)
     credit = db.get(MovieCredit, credit_id)
     if not credit or credit.movie_id != movie_id:
         raise HTTPException(404, 'Credit not found')
@@ -465,6 +477,7 @@ def movie_metadata(movie_id:int,db:Session=Depends(get_db)):
 
 @app.patch('/api/movies/{movie_id}/metadata')
 def update_movie_metadata(movie_id:int,payload:MovieMetadataPatch,db:Session=Depends(get_db),user:User=Depends(require_role('admin'))):
+    lock_catalog(db)
     m=must_movie(db,movie_id)
     try:
         apply_movie_metadata(db,m,payload)
@@ -480,6 +493,7 @@ def person_metadata(person_id:int,db:Session=Depends(get_db)):
 
 @app.patch('/api/persons/{person_id}/metadata')
 def update_person_metadata(person_id:int,payload:PersonMetadataPatch,db:Session=Depends(get_db),user:User=Depends(require_role('admin'))):
+    lock_catalog(db)
     p=must_person(db,person_id)
     try:
         apply_person_metadata(db,p,payload)

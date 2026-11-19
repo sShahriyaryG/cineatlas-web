@@ -149,6 +149,26 @@ def main():
         assert checked_json(client.get('/api/search',params={'q':'Example Director'}))['people']['items'][0]['id']==person_id
         assert film_page['total'] == 1 and film_page['items'][0]['id'] == movie_id
         assert film_page['items'][0]['average_rating'] == 9
+        # Use a distinct editor identity and the existing administrator for review.
+        contributor=checked_json(client.post('/api/auth/register',json={
+            'username':'ci_editor','email':'ci-editor@example.org','password':'synthetic-editor-password-123'}),201)
+        editor_headers={'Authorization':'Bearer '+contributor['token']}
+        with SessionLocal() as db:
+            db.get(User,contributor['user']['id']).role='editor';db.commit()
+        baseline=checked_json(client.get(f'/api/editor/catalog/movie/{movie_id}',headers=editor_headers))
+        draft=checked_json(client.post('/api/me/contributions',headers=editor_headers,json={
+            'entity':'movie','target_id':movie_id,'baseline':baseline,'reason':'Synthetic correction',
+            'changes':{'core':{'runtime':105},'metadata':{'tags':['Fixture','Editorial']}}}),201)
+        identity=draft['id']
+        assert checked_json(client.get('/api/admin/contributions',headers=headers))['total']==0
+        pending=checked_json(client.post(f'/api/me/contributions/{identity}/submit',headers=editor_headers,json={'version':draft['version']}))
+        assert checked_json(client.get(f'/api/movies/{movie_id}'))['runtime']==100
+        assert client.post(f'/api/admin/contributions/{identity}/review',headers=editor_headers,json={'version':pending['version'],'decision':'approved'}).status_code==403
+        published=checked_json(client.post(f'/api/admin/contributions/{identity}/review',headers=headers,json={'version':pending['version'],'decision':'approved'}))
+        assert published['status']=='approved' and published['result_id']==movie_id
+        assert checked_json(client.get(f'/api/movies/{movie_id}'))['runtime']==105
+        assert checked_json(client.get(metadata_path))['tags']==['Editorial','Fixture']
+        print('PASS: private draft, transactional editorial submission, authorization and publication.',flush=True)
         assert client.post('/api/auth/logout', headers=headers).status_code == 204
         assert client.get('/api/auth/me', headers=headers).status_code == 401
     # Exercise enrichment on the migrated database without HTTP or secrets.

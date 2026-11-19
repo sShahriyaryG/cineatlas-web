@@ -114,6 +114,7 @@ class MovieCredit(Base):
     person_id: Mapped[int] = mapped_column(ForeignKey('persons.id', ondelete='CASCADE'), index=True)
     role: Mapped[str] = mapped_column(String(16))
     character: Mapped[str] = mapped_column(String(240), default='')
+    position: Mapped[int | None] = mapped_column(Integer, nullable=True)
     movie: Mapped[Movie] = relationship(back_populates='credits')
     person: Mapped[Person] = relationship(lazy='joined')
     __table_args__ = (
@@ -317,3 +318,26 @@ class PersonEnrichmentField(Base):
     source: Mapped[str] = mapped_column(String(32), primary_key=True)
     external_id: Mapped[str] = mapped_column(String(64))
     imported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class Contribution(Base):
+    __tablename__ = 'contributions'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey('users.id', ondelete='SET NULL'), index=True)
+    author_name: Mapped[str] = mapped_column(String(40))
+    entity: Mapped[str] = mapped_column(String(8))
+    target_id: Mapped[int | None] = mapped_column(Integer)
+    result_id: Mapped[int | None] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(12), index=True, default='draft')
+    baseline: Mapped[str] = mapped_column(Text)
+    changes: Mapped[str] = mapped_column(Text)
+    reason: Mapped[str] = mapped_column(Text, default='')
+    source_url: Mapped[str | None] = mapped_column(String(600))
+    reviewer_id: Mapped[int | None] = mapped_column(ForeignKey('users.id', ondelete='SET NULL'))
+    reviewer_name: Mapped[str | None] = mapped_column(String(40))
+    review_note: Mapped[str] = mapped_column(Text, default='')
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    __table_args__ = (CheckConstraint("entity IN ('movie','person')", name='valid_contribution_entity'),
+                      CheckConstraint("status IN ('draft','pending','approved','rejected','withdrawn')", name='valid_contribution_status'))
