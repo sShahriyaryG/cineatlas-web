@@ -1,0 +1,50 @@
+.contrib-fieldset{border:0;margin:0;padding:0;min-width:0;display:grid;gap:1rem}
+.contrib-form,.contrib-finder,.contrib-comparison{display:grid;gap:1rem;min-width:0}
+.contrib-form details,.contrib-comparison>div,.contrib-collection{border:1px solid var(--line);padding:1rem;min-width:0}
+.contrib-form summary,.studio-review-card summary{cursor:pointer;font-weight:600;margin-bottom:.6rem}
+.contrib-collection{display:grid;gap:.6rem;margin:0;min-width:0;grid-column:1/-1}
+.contrib-collection legend{font-weight:600;padding:0 .4rem}
+.contrib-record{display:flex;align-items:end;flex-wrap:wrap;gap:.6rem;border-bottom:1px solid var(--line);padding-bottom:.7rem}
+.contrib-record label{flex:1 1 160px;min-width:0}
+.contrib-inline,.contrib-chips{display:flex;align-items:center;flex-wrap:wrap;gap:.6rem;min-width:0}
+.contrib-inline input{flex:1;min-width:100px}
+.contrib-chips button{max-width:100%;overflow-wrap:anywhere;white-space:normal}
+.contrib-before-after{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.75rem}
+.contrib-before-after>div{border:1px solid var(--line);padding:.75rem;overflow-wrap:anywhere;white-space:pre-wrap;min-width:0}
+.contrib-before-after small{display:block;font-weight:600;margin-bottom:.5rem}
+.contrib-values{margin:0;padding-left:1rem}
+.contrib-form h3,.contrib-comparison h4{margin:0 0 .5rem}
+.contrib-form label{display:grid;gap:.4rem;min-width:0}
+.contrib-form input,.contrib-form select,.contrib-form textarea{max-width:100%;min-width:0}
+@media(max-width:600px){.contrib-before-after{grid-template-columns:1fr}.contrib-form details,.contrib-collection{padding:.6rem}}
+.contrib-finder label,.studio-panel>label,.studio-review-card>label{display:grid;gap:.4rem;font-weight:600;font-size:.875rem;max-width:100%}
+.contrib-form input:not([type=checkbox]),.contrib-form select,.contrib-form textarea,.contrib-finder input,.studio-panel>label select,.studio-review-card>label textarea{width:100%;box-sizing:border-box;background:var(--surface-raised);color:var(--text);border:1px solid var(--control-border);padding:.6rem;border-radius:var(--radius);font:inherit}
+.contrib-form input[type=checkbox]{width:auto;justify-self:start;accent-color:var(--accent)}
+.contrib-record button,.contrib-inline button,.contrib-chips button,.studio-review-card button:not(.studio-secondary):not(.studio-danger){border:1px solid var(--control-border);color:var(--text);background:var(--surface);border-radius:var(--radius);padding:.5rem .7rem;cursor:pointer}
+.contrib-record button:disabled,.contrib-inline button:disabled,.studio-review-card button:disabled{opacity:.55;cursor:not-allowed}
+.studio-state.draft,.studio-state.withdrawn{border:1px solid var(--line)}
+/* Compact contribution previews; long content exists only inside opened details. */
+.contrib-history-row{border-top:1px solid var(--line);padding:.65rem 0;min-width:0}
+.contrib-history-summary{display:flex;align-items:center;gap:.65rem;flex-wrap:wrap;min-width:0}
+.contrib-history-summary .studio-list-main{flex:1 1 160px;min-width:0}
+.contrib-history-summary strong,.contrib-history-summary small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.contrib-history-summary .studio-secondary{padding:.45rem .65rem;white-space:nowrap}
+.contrib-history-detail{margin-top:.75rem;padding:.85rem;border:1px solid var(--line);display:grid;gap:.7rem;min-width:0;overflow-wrap:anywhere}
+.contrib-history-detail p{white-space:pre-wrap;overflow-wrap:anywhere;margin:0}
+.contrib-history-detail h4{margin:0}
+.contrib-history-detail label{display:grid;gap:.4rem;font-weight:600;font-size:.875rem}
+.contrib-history-detail textarea{width:100%;box-sizing:border-box;background:var(--surface-raised);color:var(--text);border:1px solid var(--control-border);padding:.6rem;border-radius:var(--radius);font:inherit}
+.contrib-feedback{white-space:pre-line;overflow-wrap:anywhere;margin:0 0 .5rem}
+.contrib-save-area{display:grid;gap:.25rem;min-width:0}
+.contrib-history-detail .studio-actions,.contrib-save-area .studio-actions{flex-wrap:wrap}
+.contrib-finder .studio-list{margin-top:0;gap:0}
+.contrib-finder .studio-list-row{padding:.6rem .2rem}
+@media(max-width:600px){.contrib-history-detail{padding:.6rem}.contrib-history-summary{gap:.45rem}}
+
+/* One compact timeline, a single status control and a single expanded item. */
+.contrib-history-panel>.studio-panel-header{align-items:center;flex-wrap:wrap;gap:.6rem;margin-bottom:.4rem}
+.contrib-history-filter{display:flex;align-items:center;gap:.5rem;font-size:.875rem;max-width:100%}
+.contrib-history-filter select{min-width:0;background:var(--surface-raised);color:var(--text);border:1px solid var(--control-border);padding:.4rem;border-radius:var(--radius);font:inherit}
+.contrib-history-panel .contrib-history-row{padding:.4rem 0}
+.contrib-history-panel .studio-list-main{gap:.1rem}
+.contrib-history-panel .studio-page{margin-top:.5rem}
